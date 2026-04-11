@@ -110,7 +110,7 @@ Terminal statuses:
 
 ## Safety rules (enforced by the script)
 
-- ✅ **Mainnet required** — Rozo operates on pubnet only. Script errors out on `STELLAR_NETWORK=testnet`.
+- ✅ **Mainnet required** — Rozo operates on pubnet only. Script errors out if `--network testnet`.
 - ✅ **Confirmation by default** — must pass `--yes` to skip the prompt.
 - ✅ **Amount range enforcement** — script rejects < $0.01 or > $10,000 before posting.
 - ✅ **Pay-out validation** — USDT on Solana/Stellar is rejected client-side with a clear error.
@@ -129,13 +129,14 @@ From `/Users/happyfish/workspace/agenttools/rozo-intents-skills/references/api-r
 
 Request body is fixed to `appId: "rozoAgent"`. `type: "exactOut"` means the recipient gets exactly the amount you specified and the fee is added on top to the source amount.
 
-## Env vars
+## Flags
+
+Pass on the command line (no env vars, no .env files):
 
 ```
-STELLAR_SECRET=S...                      # required
-STELLAR_NETWORK=pubnet                    # optional, default pubnet
-STELLAR_HORIZON_URL=https://horizon.stellar.org   # optional
+--secret-file <path>       path to Stellar secret file (default: .stellar-secret)
+--network <pubnet>         required: must be pubnet; testnet errors out
+--horizon-url <url>        optional Horizon override (default: https://horizon.stellar.org)
 ```
 
-The Rozo API base URL is hardcoded in `scripts/src/rozo-client.ts` —
-there is no env override.
+The Rozo API base URL is hardcoded in `scripts/src/rozo-client.ts` — no override.

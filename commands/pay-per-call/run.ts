@@ -8,16 +8,11 @@
  * Usage:
  *   npx tsx commands/pay-per-call/run.ts <url> [--method POST] [--body '{}'] [--yes]
  *                                        [--max-auto <usd>] [--receipt-out <path>]
- *                                        [--json]
+ *                                        [--json] [base flags]
  *
- * Env contract (loaded via loadSecret + readNetworkConfig, NOT in fetch scope):
- *   STELLAR_SECRET       required — signing key
- *   STELLAR_NETWORK      optional — "testnet" or "pubnet" (default: pubnet)
- *   STELLAR_RPC_URL      optional — Soroban RPC override
+ * Base flags: --secret-file, --network, --rpc-url (see cli-config.ts)
  */
 
-import "dotenv/config";
-import { loadSecret } from "../../scripts/src/secret.js";
 import {
   parse402,
   buildRetryHeaders,
@@ -25,8 +20,10 @@ import {
   type ParsedChallenge,
 } from "../../scripts/src/pay-engine.js";
 import type { SignerConfig } from "../../scripts/src/stellar-signer.js";
+import { parseBase, type BaseConfig } from "../../scripts/src/cli-config.js";
+import { loadSecretFromFile } from "../../scripts/src/secret.js";
 
-interface CliArgs {
+interface CmdArgs {
   url?: string;
   method: string;
   body?: string;
@@ -36,38 +33,41 @@ interface CliArgs {
   receiptOut?: string;
 }
 
-function parseArgs(): CliArgs {
-  const argv = process.argv.slice(2);
-  const a: CliArgs = { method: "GET", json: false, yes: false, maxAutoUsd: 1.0 };
-  for (let i = 0; i < argv.length; i++) {
-    const k = argv[i];
-    if (k === "--method") a.method = argv[++i];
-    else if (k === "--body") a.body = argv[++i];
+function parseCmdArgs(rest: string[]): CmdArgs {
+  const a: CmdArgs = { method: "GET", json: false, yes: false, maxAutoUsd: 1.0 };
+  for (let i = 0; i < rest.length; i++) {
+    const k = rest[i];
+    if (k === "--method") a.method = rest[++i];
+    else if (k === "--body") a.body = rest[++i];
     else if (k === "--json") a.json = true;
     else if (k === "--yes" || k === "-y") a.yes = true;
-    else if (k === "--max-auto") a.maxAutoUsd = parseFloat(argv[++i]);
-    else if (k === "--receipt-out") a.receiptOut = argv[++i];
+    else if (k === "--max-auto") a.maxAutoUsd = parseFloat(rest[++i]);
+    else if (k === "--receipt-out") a.receiptOut = rest[++i];
     else if (!k.startsWith("--") && !a.url) a.url = k;
   }
   return a;
 }
 
-/**
- * Read the non-secret network config from env.
- *
- * Kept separate from secret loading (loadSecret) and from any function
- * that calls fetch. This helper's only job is translate env → plain config.
- */
-function readNetworkConfig(): { network: "testnet" | "pubnet"; rpcUrl: string } {
-  const network = (process.env.STELLAR_NETWORK ?? "pubnet") as
-    | "testnet"
-    | "pubnet";
-  const rpcUrl =
-    process.env.STELLAR_RPC_URL ??
-    (network === "pubnet"
-      ? "https://mainnet.sorobanrpc.com"
-      : "https://soroban-testnet.stellar.org");
-  return { network, rpcUrl };
+interface RunInputs {
+  base: BaseConfig;
+  args: CmdArgs;
+  signerConfig: SignerConfig;
+}
+
+function resolveInputs(): RunInputs {
+  const { base, rest } = parseBase(process.argv.slice(2));
+  const args = parseCmdArgs(rest);
+  if (!args.url) {
+    console.error("Usage: pay-per-call.ts <url> [--method POST] [--body '{...}']");
+    process.exit(1);
+  }
+  const secret = loadSecretFromFile(base.secretFile);
+  const signerConfig: SignerConfig = {
+    secret,
+    network: base.network,
+    rpcUrl: base.rpcUrl,
+  };
+  return { base, args, signerConfig };
 }
 
 async function promptConfirm(message: string): Promise<boolean> {
@@ -96,15 +96,8 @@ async function dumpResponse(res: Response, jsonMode: boolean) {
   }
 }
 
-/**
- * Actual payment flow. Takes a fully-constructed signerConfig as a
- * parameter — this function does NOT read process.env. All network I/O
- * lives here; config loading is done by the caller.
- */
-async function runPayFlow(
-  args: CliArgs,
-  signerConfig: SignerConfig,
-): Promise<void> {
+async function runPayFlow(inputs: RunInputs): Promise<void> {
+  const { args, signerConfig } = inputs;
   const init: RequestInit = {
     method: args.method,
     headers: args.body ? { "Content-Type": "application/json" } : undefined,
@@ -161,26 +154,9 @@ async function runPayFlow(
   await dumpResponse(res, args.json);
 }
 
-/**
- * Entry point. CLI parsing + env loading ONLY — no fetch calls.
- * Hands a fully-constructed signerConfig to runPayFlow.
- */
 async function main() {
-  const args = parseArgs();
-  if (!args.url) {
-    console.error("Usage: pay-per-call.ts <url> [--method POST] [--body '{...}']");
-    process.exit(1);
-  }
-
-  const secret = loadSecret();
-  const netCfg = readNetworkConfig();
-  const signerConfig: SignerConfig = {
-    secret,
-    network: netCfg.network,
-    rpcUrl: netCfg.rpcUrl,
-  };
-
-  await runPayFlow(args, signerConfig);
+  const inputs = resolveInputs();
+  await runPayFlow(inputs);
 }
 
 main().catch((err) => {

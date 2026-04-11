@@ -3,27 +3,26 @@
  *
  * Flow:
  *   1. Validate destination chain + token pairing
- *   2. POST create-payment to Rozo (library — hardcoded URL) → payment ID
+ *   2. Create payment intent via the Rozo client library
  *   3. Show quote to user, confirm on mainnet (always unless --yes)
  *   4. Submit the Stellar Classic USDC payment to the deposit address
  *   5. Print Stellar tx hash; point at status.ts for polling
  *
- * Env contract (loaded at top of main(), NOT in any fetch scope):
- *   STELLAR_SECRET      required — signing key
- *   STELLAR_NETWORK     optional — "testnet" | "pubnet" (default: pubnet)
- *                       Rozo operates on pubnet only; testnet will error.
- *   STELLAR_HORIZON_URL optional — Horizon override
- *
  * Usage:
  *   npx tsx commands/send-payment/run.ts \
- *     --to <address> --chain <chain> [--token USDC|USDT] --amount <decimal>
+ *     --to <address> --chain <chain> [--token USDC|USDT] --amount <decimal> \
+ *     [base flags]
+ *
+ * Base flags: --secret-file, --network, --horizon-url (see cli-config.ts)
+ *
+ * NOTE: Rozo operates on mainnet only. --network testnet will error.
  */
 
-import "dotenv/config";
 import * as readline from "node:readline/promises";
-import { loadSecret } from "../../scripts/src/secret.js";
 import { createPayment } from "../../scripts/src/rozo-client.js";
 import type { RozoCreateRequest } from "../../scripts/src/rozo-client.js";
+import { parseBase, type BaseConfig } from "../../scripts/src/cli-config.js";
+import { loadSecretFromFile } from "../../scripts/src/secret.js";
 
 const CHAIN_IDS: Record<string, number> = {
   ethereum: 1,
@@ -76,7 +75,7 @@ const MIN_AMOUNT_USD = 0.01;
 
 type Chain = keyof typeof CHAIN_IDS;
 
-interface CliArgs {
+export interface CmdArgs {
   to?: string;
   chain?: Chain;
   token: "USDC" | "USDT";
@@ -89,32 +88,31 @@ interface CliArgs {
   description?: string;
 }
 
-interface RuntimeConfig {
+interface RunInputs {
+  base: BaseConfig;
   secret: string;
-  network: "testnet" | "pubnet";
-  horizonUrl: string;
+  args: CmdArgs;
 }
 
-function parseArgs(): CliArgs {
-  const argv = process.argv.slice(2);
-  const a: CliArgs = { token: "USDC", json: false, yes: false };
-  for (let i = 0; i < argv.length; i++) {
-    const k = argv[i];
-    if (k === "--to") a.to = argv[++i];
-    else if (k === "--chain") a.chain = argv[++i].toLowerCase() as Chain;
-    else if (k === "--token") a.token = argv[++i].toUpperCase() as "USDC" | "USDT";
-    else if (k === "--amount") a.amount = argv[++i];
-    else if (k === "--memo") a.memo = argv[++i];
-    else if (k === "--order-id") a.orderId = argv[++i];
-    else if (k === "--title") a.title = argv[++i];
-    else if (k === "--description") a.description = argv[++i];
+function parseCmdArgs(rest: string[]): CmdArgs {
+  const a: CmdArgs = { token: "USDC", json: false, yes: false };
+  for (let i = 0; i < rest.length; i++) {
+    const k = rest[i];
+    if (k === "--to") a.to = rest[++i];
+    else if (k === "--chain") a.chain = rest[++i].toLowerCase() as Chain;
+    else if (k === "--token") a.token = rest[++i].toUpperCase() as "USDC" | "USDT";
+    else if (k === "--amount") a.amount = rest[++i];
+    else if (k === "--memo") a.memo = rest[++i];
+    else if (k === "--order-id") a.orderId = rest[++i];
+    else if (k === "--title") a.title = rest[++i];
+    else if (k === "--description") a.description = rest[++i];
     else if (k === "--json") a.json = true;
     else if (k === "--yes" || k === "-y") a.yes = true;
   }
   return a;
 }
 
-function validateAmount(args: CliArgs) {
+function validateAmount(args: CmdArgs) {
   if (!args.to) throw new Error("--to <address> is required");
   if (!args.chain || !(args.chain in CHAIN_IDS)) {
     throw new Error(
@@ -146,6 +144,19 @@ function validateAmount(args: CliArgs) {
   };
 }
 
+function resolveInputs(externalArgs?: CmdArgs): RunInputs {
+  const { base, rest } = parseBase(process.argv.slice(2));
+  const args = externalArgs ?? parseCmdArgs(rest);
+  if (base.network !== "pubnet") {
+    console.error(
+      "⚠️  Rozo intent API operates on mainnet. Pass --network pubnet.",
+    );
+    process.exit(1);
+  }
+  const secret = loadSecretFromFile(base.secretFile);
+  return { base, secret, args };
+}
+
 async function confirm(prompt: string): Promise<boolean> {
   const rl = readline.createInterface({
     input: process.stdin,
@@ -156,19 +167,19 @@ async function confirm(prompt: string): Promise<boolean> {
   return ans.trim().toLowerCase() === "yes";
 }
 
-/**
- * Actual payment flow. Takes runtime config as a parameter.
- * NO process.env reads. All network and on-chain I/O lives here.
- */
-async function runSendFlow(args: CliArgs, cfg: RuntimeConfig): Promise<void> {
+async function runSendFlow(inputs: RunInputs): Promise<void> {
+  const { base, secret, args } = inputs;
   const v = validateAmount(args);
 
-  // Derive pubkey from secret (local-only, no network)
   const { Keypair } = await import("@stellar/stellar-sdk");
-  const sourcePubkey = Keypair.fromSecret(cfg.secret).publicKey();
+  const sourcePubkey = Keypair.fromSecret(secret).publicKey();
 
   console.log(
-    "=== Rozo cross-chain payment (Stellar USDC → " + v.chain + " " + v.token + ") ===",
+    "=== Rozo cross-chain payment (Stellar USDC → " +
+      v.chain +
+      " " +
+      v.token +
+      ") ===",
   );
   console.log(`  From wallet: ${sourcePubkey}`);
   console.log(`  To:          ${v.to}`);
@@ -248,7 +259,7 @@ async function runSendFlow(args: CliArgs, cfg: RuntimeConfig): Promise<void> {
 
   const { Horizon, Asset, Networks, Operation, TransactionBuilder, BASE_FEE, Memo } =
     await import("@stellar/stellar-sdk");
-  const horizon = new Horizon.Server(cfg.horizonUrl);
+  const horizon = new Horizon.Server(base.horizonUrl);
   const account = await horizon.loadAccount(sourcePubkey);
 
   const usdcAsset = new Asset(
@@ -274,44 +285,29 @@ async function runSendFlow(args: CliArgs, cfg: RuntimeConfig): Promise<void> {
   }
 
   const tx = txBuilder.build();
-  tx.sign(Keypair.fromSecret(cfg.secret));
+  tx.sign(Keypair.fromSecret(secret));
 
   const result = await horizon.submitTransaction(tx);
 
   console.log("");
   console.log(`✅ Stellar payment submitted`);
   console.log(`   Stellar tx hash: ${result.hash}`);
-  console.log(`   View:            https://stellar.expert/explorer/public/tx/${result.hash}`);
+  console.log(
+    `   View:            https://stellar.expert/explorer/public/tx/${result.hash}`,
+  );
   console.log("");
   console.log(`Poll status: npx tsx commands/send-payment/status.ts ${intent.id}`);
 }
 
 /**
- * Entry point. Parses argv, reads env, builds RuntimeConfig, and hands
- * it off to runSendFlow. No fetch calls in this function.
+ * Exported entry point used by commands/bridge/run.ts, which wants to
+ * construct CmdArgs in-process and reuse this module's logic.
  */
-export async function main(externalArgs?: CliArgs) {
-  const args = externalArgs ?? parseArgs();
-
-  const network = (process.env.STELLAR_NETWORK ?? "pubnet") as
-    | "testnet"
-    | "pubnet";
-  if (network !== "pubnet") {
-    console.error(
-      "⚠️  Rozo intent API operates on mainnet. Set STELLAR_NETWORK=pubnet in .env.",
-    );
-    process.exit(1);
-  }
-
-  const secret = loadSecret();
-  const horizonUrl =
-    process.env.STELLAR_HORIZON_URL ?? "https://horizon.stellar.org";
-
-  const cfg: RuntimeConfig = { secret, network, horizonUrl };
-  await runSendFlow(args, cfg);
+export async function main(externalArgs?: CmdArgs) {
+  const inputs = resolveInputs(externalArgs);
+  await runSendFlow(inputs);
 }
 
-// CLI entry
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch((err) => {
     console.error(`❌ ${err.message}`);

@@ -5,9 +5,9 @@
  *   3. Sign the inner XDR
  *   4. Retry with the payment header
  *
- * No process.env reads. All configuration (network, rpcUrl, secret) is
- * passed in via `SignerConfig` from the caller. The caller's CLI scope
- * is where env vars are read.
+ * All configuration (network, rpcUrl, secret) is passed in via
+ * `SignerConfig` from the caller. This module takes no external state
+ * and is a pure library.
  */
 
 import { signSacTransfer, type SignerConfig } from "./stellar-signer.js";

@@ -8,11 +8,9 @@
  *   npx tsx commands/discover/run.ts --query "scrape" --pick-one
  *   npx tsx commands/discover/run.ts --json
  *
- * No env vars required. The MPP Router base URL is hardcoded in
- * scripts/src/mpprouter-client.ts.
+ * Takes no authentication. All config is hardcoded in the library.
  */
 
-import "dotenv/config";
 import {
   fetchCatalog,
   scoreService,

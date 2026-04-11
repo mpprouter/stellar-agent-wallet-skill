@@ -74,5 +74,5 @@ npx tsx commands/pay-per-call/run.ts "$URL" \
 
 ## Env vars used
 
-- `STELLAR_SECRET`, `STELLAR_NETWORK`, `STELLAR_RPC_URL` — for signing
-- `STELLAR_ASSET_SAC` — default asset if challenge doesn't specify one
+- `--secret-file`, `--network`, `--rpc-url` — for signing
+- `--asset-sac <address>` — default asset if challenge doesn't specify one

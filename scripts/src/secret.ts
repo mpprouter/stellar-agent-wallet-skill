@@ -1,62 +1,72 @@
 /**
- * Secret handling — central guardrails for STELLAR_SECRET.
+ * Secret handling — file-based loader with guardrails.
  *
  * Rules enforced here:
- *   1. Secret is read from process.env.STELLAR_SECRET ONCE at a known entry
- *      point, and passed downstream as a function argument.
- *   2. Secret must NOT appear in process.argv (users who pass it on the
- *      command line by mistake get a hard error).
- *   3. Secret is never written to stdout/stderr. We install a wrapper on
- *      process.stdout.write and process.stderr.write that redacts any
- *      occurrence of the secret.
- *   4. No module-level storage — the secret is returned from loadSecret()
- *      and the caller holds it in a local binding, not a global.
- *
- * Keep this file free of `fetch` calls and unrelated concerns.
+ *   1. Secrets come from a file path. No environment reads.
+ *   2. The file contents must match the Stellar strkey pattern (S... 56 chars).
+ *   3. We install a stdout/stderr wrapper that replaces any accidental
+ *      occurrence of the secret with [REDACTED].
+ *   4. No module-level storage — loadSecretFromFile returns the value and
+ *      the caller holds it in a local binding only.
  */
 
-const REDACTED = "[REDACTED:STELLAR_SECRET]";
+import * as fs from "node:fs";
+
+const REDACTED = "[REDACTED:signing-key]";
 
 /**
- * Read STELLAR_SECRET from the environment, enforce guards, and return it.
+ * Read a Stellar secret key from a file path.
  *
- * Callers should hold the returned value in a local variable and pass it
- * directly to signer functions. Do not store it in a module-level binding.
+ * The file should contain a single line: the S... strkey. Any surrounding
+ * whitespace is trimmed. Blank lines and lines starting with # are ignored
+ * so the same file can carry a comment header if desired.
  */
-export function loadSecret(): string {
-  const argv = process.argv.slice(2).join(" ");
-  if (/\bS[A-Z0-9]{55}\b/.test(argv)) {
-    // Looks like a raw Stellar secret was passed on the command line.
+export function loadSecretFromFile(path: string): string {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(path, "utf8");
+  } catch (err: any) {
+    if (err?.code === "ENOENT") {
+      throw new Error(
+        `Secret file not found at ${path}. Generate one with:\n` +
+          `  npx tsx scripts/generate-keypair.ts\n` +
+          `or pass an existing file via --secret-file <path>.`,
+      );
+    }
+    throw err;
+  }
+
+  // Pick the first non-blank, non-comment line.
+  const line = raw
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .find((l) => l.length > 0 && !l.startsWith("#"));
+
+  if (!line) {
     throw new Error(
-      "Refusing to run: a Stellar secret appears to be on the command line. " +
-        "Never pass STELLAR_SECRET as an argument — put it in a .env file instead.",
+      `Secret file ${path} is empty or only contains comments.`,
     );
   }
 
-  const secret = process.env.STELLAR_SECRET;
-  if (!secret) {
+  if (!/^S[A-Z0-9]{55}$/.test(line)) {
     throw new Error(
-      "STELLAR_SECRET is required. Create a .env file with STELLAR_SECRET=S...",
-    );
-  }
-  if (!/^S[A-Z0-9]{55}$/.test(secret)) {
-    throw new Error(
-      "STELLAR_SECRET in .env does not look like a Stellar secret key (S... 56 chars).",
+      `Secret file ${path} does not contain a valid Stellar secret key ` +
+        `(expected 56 characters starting with S).`,
     );
   }
 
-  installStdoutRedactor(secret);
-  return secret;
+  installRedactor(line);
+  return line;
 }
 
 /**
  * Wrap process.stdout.write and process.stderr.write so that any
  * accidental occurrence of the secret is replaced with [REDACTED].
  *
- * This is a belt-and-braces defense — the code should never pass the
+ * This is a belt-and-braces defense — code should never pass the
  * secret to a print function in the first place.
  */
-function installStdoutRedactor(secret: string): void {
+function installRedactor(secret: string): void {
   const origStdout = process.stdout.write.bind(process.stdout);
   const origStderr = process.stderr.write.bind(process.stderr);
 
@@ -77,19 +87,4 @@ function installStdoutRedactor(secret: string): void {
     origStdout(redact(chunk), ...rest)) as typeof process.stdout.write;
   process.stderr.write = ((chunk: any, ...rest: any[]) =>
     origStderr(redact(chunk), ...rest)) as typeof process.stderr.write;
-}
-
-/**
- * Utility for commands that don't need to sign — derives the public
- * key of the configured secret without holding onto it.
- */
-export function pubkeyOnly(): string {
-  const secret = loadSecret();
-  // Import dynamically so callers that never need this function don't
-  // pay the stellar-sdk load cost.
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { Keypair } = require("@stellar/stellar-sdk");
-  const pk = Keypair.fromSecret(secret).publicKey();
-  // `secret` goes out of scope here.
-  return pk;
 }

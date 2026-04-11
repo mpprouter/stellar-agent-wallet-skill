@@ -7,11 +7,11 @@
  * Pure in-process import of send-payment's main() — no subprocess spawning.
  *
  * Usage:
- *   npx tsx commands/bridge/run.ts --chain <chain> --amount <decimal> --my-address <addr>
+ *   npx tsx commands/bridge/run.ts --chain <chain> --amount <decimal> \
+ *     --my-address <addr> [base flags]
  */
 
-import "dotenv/config";
-import { main as sendPaymentMain } from "../send-payment/run.js";
+import { main as sendPaymentMain, type CmdArgs } from "../send-payment/run.js";
 
 type Chain = "ethereum" | "arbitrum" | "base" | "bsc" | "polygon" | "solana";
 
@@ -71,16 +71,16 @@ async function main() {
   console.log("(delegating to send-payment)");
   console.log("");
 
-  // Call send-payment's main() directly with the constructed args.
-  // No subprocess, no shell, no argv rebuilding.
-  await sendPaymentMain({
+  const sendArgs: CmdArgs = {
     to: args.myAddress,
     chain: args.chain,
     token: args.token,
     amount: args.amount,
     json: false,
     yes: args.yes,
-  });
+  };
+
+  await sendPaymentMain(sendArgs);
 }
 
 main().catch((err) => {

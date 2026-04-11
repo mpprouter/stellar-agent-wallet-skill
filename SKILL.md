@@ -11,17 +11,14 @@ description: >
   api with stellar", or when the user shares a G... address with a payment intent.
 metadata:
   author: stellar-agent-wallet
-  version: 1.0.2
+  version: 1.0.3
   license: MIT
   runtime: node
 
-  # Runtime dependencies the user's scaffolded project must install.
-  # The skill itself does not ship node_modules; the scaffold step
-  # adds these to the user's project.
+  # Runtime dependencies the user must install in the project directory.
   dependencies:
     required:
       - "@stellar/stellar-sdk"
-      - dotenv
       - tsx
     optional:
       - "@stellar/mpp"   # MPP envelope (charge mode)
@@ -29,40 +26,54 @@ metadata:
       - "@x402/stellar"  # x402 envelope
       - "@x402/core"     # x402 envelope
 
-  # Environment variables the skill reads at runtime.
-  # STELLAR_SECRET is a wallet private key — treat as sensitive.
-  env:
-    required:
-      STELLAR_SECRET:
-        description: >
-          Stellar secret key (S...) used to sign on-chain payment transactions.
-          THIS IS A WALLET PRIVATE KEY. Use a dedicated hot wallet with a
-          limited balance — never your main account. Never paste into a UI
-          you do not fully control.
-        sensitive: true
-    optional:
-      STELLAR_NETWORK:
-        description: "testnet or pubnet"
-        default: pubnet
-        warning: >
-          Default is pubnet (mainnet). If unset, all transactions move real
-          funds. Set STELLAR_NETWORK=testnet explicitly when prototyping.
-      STELLAR_HORIZON_URL:
-        description: Override Horizon REST endpoint.
-      STELLAR_RPC_URL:
-        description: Override Soroban RPC endpoint.
-      STELLAR_ASSET_SAC:
-        description: Stellar Asset Contract address for the payment token.
+  # Secret handling.
+  #
+  # This skill signs Stellar transactions. It takes the signing key from
+  # a file on disk, NOT from shell environment variables. Use:
+  #
+  #   npx tsx scripts/generate-keypair.ts
+  #
+  # which writes a fresh secret to ./.stellar-secret with mode 600.
+  # Every command accepts --secret-file <path> (default: .stellar-secret).
+  #
+  # Why file-based: environment variables leak into shell history and
+  # ps(1) output. File-based secrets with mode 600 are the pattern used
+  # by comparable wallets on ClawHub.
+  secret_handling:
+    method: file
+    default_path: .stellar-secret
+    file_mode: "600"
+    notes: >
+      Generated via scripts/generate-keypair.ts. Never printed to stdout.
+      loadSecretFromFile validates the Stellar strkey format before use.
 
-  # Commands that move funds. Each of these requires user confirmation
-  # above the threshold below (readline prompt, unless --yes passed).
+  # Configuration flags accepted by every command.
+  cli_flags:
+    "--secret-file <path>":
+      description: Path to a file containing the Stellar secret key.
+      default: .stellar-secret
+    "--network <name>":
+      description: testnet or pubnet.
+      default: pubnet
+      warning: >
+        Default is pubnet (mainnet). Real funds move. Pass --network testnet
+        explicitly while prototyping.
+    "--horizon-url <url>":
+      description: Override Horizon REST endpoint.
+    "--rpc-url <url>":
+      description: Override Soroban RPC endpoint.
+    "--asset-sac <address>":
+      description: Stellar Asset Contract address for the payment token.
+
+  # Commands that move funds. Each prompts for confirmation above the
+  # threshold below (readline, unless --yes passed).
   spending_commands:
     - pay-per-call
     - send-payment
     - bridge
   spending_confirmation_threshold_usd: 1.0
 
-  # Network endpoints this skill contacts.
+  # Outbound endpoints this skill contacts.
   network_endpoints:
     - apiserver.mpprouter.dev       # MPP Router catalog
     - intentapiv4.rozo.ai            # Rozo cross-chain intents
@@ -77,16 +88,19 @@ metadata:
 > ⚠️ **SECURITY — READ BEFORE INSTALL**
 >
 > This skill is a **Stellar wallet**. It signs on-chain transactions using
-> `STELLAR_SECRET` — a private key that can move real funds. Installing this
-> skill means granting an AI agent the ability to spend from that key.
+> a private key that can move real funds. Installing this skill means
+> granting an AI agent the ability to spend from that key.
 >
 > - **Use a dedicated hot wallet with a limited balance.** Never your main account.
-> - **Default network is `pubnet` (mainnet).** If you do not set
->   `STELLAR_NETWORK=testnet`, every transaction moves real USDC. This is
->   intentional but unforgiving — export `STELLAR_NETWORK=testnet` while
->   prototyping.
-> - **Never paste `STELLAR_SECRET` into any UI or chat you do not fully control.**
->   Put it in a local `.env` file only.
+> - **Keys live in a file, not environment variables.** Run
+>   `npx tsx scripts/generate-keypair.ts` and it writes a fresh secret to
+>   `.stellar-secret` with mode 600. Every command takes `--secret-file <path>`
+>   (default `.stellar-secret`).
+> - **Default network is `pubnet` (mainnet).** If you do not pass
+>   `--network testnet`, every transaction moves real USDC. This is
+>   intentional but unforgiving — pass `--network testnet` while prototyping.
+> - **Never paste your secret into any UI or chat you do not fully control.**
+>   Keep it in the secret file only.
 > - **Spending commands (`pay-per-call`, `send-payment`, `bridge`) prompt for
 >   confirmation above $1 USD** and every time on mainnet for `send-payment` /
 >   `bridge`. Pass `--yes` only after testing on testnet.
@@ -144,26 +158,32 @@ When triggered, read the user's intent and dispatch:
 
 ## First-time setup
 
-The skill is self-contained — there is no scaffold step that copies
-files into a user project. Clone or install the skill, install deps,
-set up `.env`, and run commands directly.
+The skill is self-contained — no scaffold step, no shell env vars, just
+install deps and run commands directly.
 
 ```bash
 # 1. Install deps (one-time)
-pnpm add @stellar/stellar-sdk dotenv tsx
+pnpm add @stellar/stellar-sdk tsx
 
-# 2. Generate a keypair. This writes STELLAR_SECRET straight to .env
-#    with mode 600 — the secret is NEVER printed to the terminal.
+# 2. Generate a keypair. This writes the secret straight to
+#    ./.stellar-secret with mode 600 — the secret is NEVER printed.
 npx tsx scripts/generate-keypair.ts
 
 # 3. (testnet only) Fund your new account via Friendbot:
 #    curl "https://friendbot.stellar.org?addr=<the pubkey printed above>"
 
-# 4. Optional: review .env.example for overrides
-#    (STELLAR_NETWORK, STELLAR_HORIZON_URL, STELLAR_RPC_URL, STELLAR_ASSET_SAC)
+# 4. Try a read-only command:
+npx tsx commands/check-balance/run.ts --network testnet
+```
 
-# 5. Try a read-only command:
-npx tsx commands/check-balance/run.ts
+Every command accepts the same base flags:
+
+```
+--secret-file <path>    Stellar secret file (default: .stellar-secret)
+--network <name>        testnet | pubnet (default: pubnet)
+--horizon-url <url>     override Horizon endpoint
+--rpc-url <url>         override Soroban RPC endpoint
+--asset-sac <address>   Stellar Asset Contract address
 ```
 
 ## Testnet → mainnet promotion
@@ -208,11 +228,11 @@ stellar-agent-wallet/
 │   ├── sponsored-mode.md
 │   ├── sdk-api-cheatsheet.md
 │   └── mainnet-checklist.md
-├── .env.example                      ← copy to .env and fill in
 ├── scripts/
-│   ├── generate-keypair.ts           ← writes new secret straight to .env
-│   └── src/                          ← shared library code (pure, no env reads)
-│       ├── secret.ts                 ← STELLAR_SECRET loader + redactor
+│   ├── generate-keypair.ts           ← writes .stellar-secret with mode 600
+│   └── src/                          ← shared library code
+│       ├── secret.ts                 ← file-based secret loader + redactor
+│       ├── cli-config.ts             ← shared command-line flag parser
 │       ├── stellar-signer.ts         ← sign SAC transfers
 │       ├── rozo-client.ts            ← Rozo intent API client
 │       ├── mpprouter-client.ts       ← MPP Router catalog client

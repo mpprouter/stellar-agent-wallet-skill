@@ -1,15 +1,13 @@
 /**
  * send-payment/status — poll a Rozo payment ID until complete.
  *
- * No env vars required. The Rozo API base URL is hardcoded in
- * scripts/src/rozo-client.ts.
- *
  * Usage:
  *   npx tsx commands/send-payment/status.ts <payment-id>
  *   npx tsx commands/send-payment/status.ts <payment-id> --watch
+ *
+ * Takes no authentication. The Rozo API base is hardcoded in the client library.
  */
 
-import "dotenv/config";
 import { getPaymentStatus } from "../../scripts/src/rozo-client.js";
 
 const STATUS_MEANINGS: Record<string, string> = {

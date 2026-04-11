@@ -34,14 +34,14 @@ Public Soroban RPCs on mainnet are unreliable for production. Pick a paid provid
 
 ## Preflight checklist before first mainnet run
 
-- [ ] `STELLAR_NETWORK=pubnet` in `.env`
-- [ ] `STELLAR_RPC_URL` set to a paid/reliable provider
-- [ ] `STELLAR_ASSET_SAC` set to `CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75` (mainnet USDC) — **not the testnet one**
+- [ ] `--network pubnet` (this is the default, so omitting the flag is fine)
+- [ ] `--rpc-url <provider>` set to a paid/reliable provider
+- [ ] `--asset-sac CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75` (mainnet USDC) — **not the testnet one**
 - [ ] Stellar account funded with **at least 2 XLM reserve** (minimum balance + trustline reserves)
-- [ ] Trustline to mainnet USDC issuer (`GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN`) established — Classic Asset, not SAC. See `sdk/src/constants.ts` in stellar-mpp-sdk for the issuer address.
+- [ ] Trustline to mainnet USDC issuer (`GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN`) established — Classic Asset, not SAC.
 - [ ] Funded with the USDC amount you plan to spend + headroom for fees
 - [ ] Tested the exact same flow on testnet first — **never go straight to mainnet**
-- [ ] Secret key is NOT committed to git (`.env` is in `.gitignore`)
+- [ ] `.stellar-secret` file has mode 600 and is NOT committed to git
 - [ ] You have a hot wallet with limited funds, not your treasury account
 
 ## Fee budgeting

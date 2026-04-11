@@ -2,19 +2,19 @@
  * check-balance — read Stellar USDC + XLM for an account.
  *
  * Usage:
- *   npx tsx commands/check-balance/run.ts [G... pubkey] [--json]
+ *   npx tsx commands/check-balance/run.ts [G... pubkey] [--json] [base flags]
  *
- * If no pubkey given, derives it from STELLAR_SECRET in .env.
+ * If no pubkey given, derives it from the --secret-file (default
+ * .stellar-secret in cwd).
  *
- * Env contract (loaded in readConfig, not in any fetch function):
- *   STELLAR_NETWORK      optional (default: pubnet)
- *   STELLAR_HORIZON_URL  optional
- *   STELLAR_RPC_URL      optional
- *   STELLAR_ASSET_SAC    optional
- *   STELLAR_SECRET       optional — only if no pubkey passed on CLI
+ * Base flags (from scripts/src/cli-config.ts):
+ *   --secret-file <path>    default: .stellar-secret
+ *   --network <name>        testnet|pubnet, default: pubnet
+ *   --horizon-url <url>     override Horizon endpoint
+ *   --rpc-url <url>         override Soroban RPC endpoint
+ *   --asset-sac <addr>      Stellar Asset Contract address
  */
 
-import "dotenv/config";
 import {
   Horizon,
   Keypair,
@@ -27,6 +27,8 @@ import {
   Account,
   Networks,
 } from "@stellar/stellar-sdk";
+import { parseBase, type BaseConfig } from "../../scripts/src/cli-config.js";
+import { loadSecretFromFile } from "../../scripts/src/secret.js";
 
 interface BalanceLine {
   asset: string;
@@ -42,71 +44,46 @@ interface BalanceReport {
   spendableXlm: string;
 }
 
-interface RuntimeConfig {
-  network: "testnet" | "pubnet";
-  horizonUrl: string;
-  rpcUrl: string;
-  sacAddress?: string;
-  pubkey: string;
-  jsonOutput: boolean;
-}
-
 const CLASSIC_USDC_ISSUERS: Record<string, string> = {
   testnet: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
   pubnet: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
 };
 
-/**
- * Build the runtime config from argv + env. No fetch calls.
- */
-function readConfig(): RuntimeConfig {
-  const args = process.argv.slice(2).filter((a) => a !== "--json");
-  const jsonOutput = process.argv.includes("--json");
-
-  const network = (process.env.STELLAR_NETWORK ?? "pubnet") as
-    | "testnet"
-    | "pubnet";
-  const horizonUrl =
-    process.env.STELLAR_HORIZON_URL ??
-    (network === "pubnet"
-      ? "https://horizon.stellar.org"
-      : "https://horizon-testnet.stellar.org");
-  const rpcUrl =
-    process.env.STELLAR_RPC_URL ??
-    (network === "pubnet"
-      ? "https://mainnet.sorobanrpc.com"
-      : "https://soroban-testnet.stellar.org");
-  const sacAddress = process.env.STELLAR_ASSET_SAC;
-
-  let pubkey = args[0];
-  if (!pubkey) {
-    const secret = process.env.STELLAR_SECRET;
-    if (!secret) {
-      console.error(
-        "No pubkey given and STELLAR_SECRET not set. Run:",
-        "  npx tsx commands/check-balance/run.ts G...",
-      );
-      process.exit(1);
-    }
-    pubkey = Keypair.fromSecret(secret).publicKey();
-    // secret out of scope now
-  }
-
-  return { network, horizonUrl, rpcUrl, sacAddress, pubkey, jsonOutput };
+interface RunInputs {
+  base: BaseConfig;
+  pubkey: string;
+  jsonOutput: boolean;
 }
 
 /**
- * Runtime flow. No process.env reads.
- * Takes plain config as an argument and performs all network I/O.
+ * Parse argv, resolve the account pubkey (either from CLI positional
+ * argument, or by deriving from a secret file), and return plain inputs
+ * for the runner. Performs no outbound calls.
  */
-async function runCheck(cfg: RuntimeConfig): Promise<BalanceReport> {
-  const horizon = new Horizon.Server(cfg.horizonUrl);
+function resolveInputs(): RunInputs {
+  const { base, rest } = parseBase(process.argv.slice(2));
+  const jsonOutput = rest.includes("--json");
+  const positional = rest.filter((a) => a !== "--json");
+
+  let pubkey = positional[0];
+  if (!pubkey) {
+    const secret = loadSecretFromFile(base.secretFile);
+    pubkey = Keypair.fromSecret(secret).publicKey();
+    // secret binding goes out of scope here
+  }
+
+  return { base, pubkey, jsonOutput };
+}
+
+async function runCheck(inputs: RunInputs): Promise<BalanceReport> {
+  const { base, pubkey } = inputs;
+  const horizon = new Horizon.Server(base.horizonUrl);
   const balances: BalanceLine[] = [];
   let reserveXlm = "0";
   let xlmClassic = "0";
 
   try {
-    const account = await horizon.loadAccount(cfg.pubkey);
+    const account = await horizon.loadAccount(pubkey);
     for (const b of account.balances) {
       if (b.asset_type === "native") {
         xlmClassic = b.balance;
@@ -114,7 +91,7 @@ async function runCheck(cfg: RuntimeConfig): Promise<BalanceReport> {
       } else if (
         "asset_code" in b &&
         b.asset_code === "USDC" &&
-        b.asset_issuer === CLASSIC_USDC_ISSUERS[cfg.network]
+        b.asset_issuer === CLASSIC_USDC_ISSUERS[base.network]
       ) {
         balances.push({ asset: "USDC", amount: b.balance, source: "classic" });
       }
@@ -124,10 +101,10 @@ async function runCheck(cfg: RuntimeConfig): Promise<BalanceReport> {
     reserveXlm = reserveXlmNum.toFixed(7);
   } catch (err: any) {
     if (err?.response?.status === 404) {
-      console.error(`Account ${cfg.pubkey} not found on ${cfg.network}.`);
-      if (cfg.network === "testnet") {
+      console.error(`Account ${pubkey} not found on ${base.network}.`);
+      if (base.network === "testnet") {
         console.error(
-          `Fund it: curl "https://friendbot.stellar.org?addr=${cfg.pubkey}"`,
+          `Fund it: curl "https://friendbot.stellar.org?addr=${pubkey}"`,
         );
       }
       process.exit(1);
@@ -135,20 +112,20 @@ async function runCheck(cfg: RuntimeConfig): Promise<BalanceReport> {
     throw err;
   }
 
-  if (cfg.sacAddress) {
+  if (base.assetSac) {
     try {
       const sacAmount = await readSacBalance(
-        cfg.rpcUrl,
-        cfg.sacAddress,
-        cfg.pubkey,
-        cfg.network,
+        base.rpcUrl,
+        base.assetSac,
+        pubkey,
+        base.network,
       );
       if (sacAmount !== null) {
         const humanAmount = (Number(sacAmount) / 10_000_000).toFixed(7);
         balances.push({ asset: "USDC", amount: humanAmount, source: "sac" });
       }
     } catch (err) {
-      if (!cfg.jsonOutput) {
+      if (!inputs.jsonOutput) {
         console.error(`(SAC balance read failed: ${(err as Error).message})`);
       }
     }
@@ -157,8 +134,8 @@ async function runCheck(cfg: RuntimeConfig): Promise<BalanceReport> {
   const spendableXlm = (Number(xlmClassic) - Number(reserveXlm)).toFixed(7);
 
   return {
-    account: cfg.pubkey,
-    network: cfg.network,
+    account: pubkey,
+    network: base.network,
     balances,
     reserveXlm,
     spendableXlm,
@@ -215,9 +192,9 @@ function renderReport(report: BalanceReport, jsonOutput: boolean) {
 }
 
 async function main() {
-  const cfg = readConfig();
-  const report = await runCheck(cfg);
-  renderReport(report, cfg.jsonOutput);
+  const inputs = resolveInputs();
+  const report = await runCheck(inputs);
+  renderReport(report, inputs.jsonOutput);
 }
 
 main().catch((err) => {

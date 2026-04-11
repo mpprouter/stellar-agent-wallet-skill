@@ -1,9 +1,9 @@
 /**
  * Unified Stellar payment signer — pure library.
  *
- * No process.env reads. All configuration passed as function arguments.
- * Used by commands/pay-per-call/run.ts and commands/send-payment/run.ts
- * after those CLI entry points parse their own env vars.
+ * All configuration passed as function arguments. Used by
+ * commands/pay-per-call/run.ts after the CLI entry point loads its
+ * own secret and config.
  *
  * Produces an inner transaction XDR (base64) that:
  *  - Invokes SAC `transfer(from, to, amount)`

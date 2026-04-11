@@ -2,6 +2,10 @@
 .env
 .env.local
 .env.*.local
+.stellar-secret
+*.stellar-secret
+stellar.key
+*.key
 
 # Dependencies (this is a skill package — no deps expected, but guard anyway)
 node_modules/

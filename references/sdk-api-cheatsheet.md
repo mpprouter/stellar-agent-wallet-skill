@@ -35,20 +35,20 @@ USDC on Stellar: **7 decimals**. Not 6 like on EVM.
 
 ```typescript
 import { Keypair } from "@stellar/stellar-sdk";
-import { resolveKeypair } from "@stellar/mpp";
+import { loadSecretFromFile } from "../scripts/src/secret.js";
 
-// From S... secret string
-const kp = Keypair.fromSecret(process.env.STELLAR_SECRET!);
-
-// Or: let @stellar/mpp normalize (accepts Keypair | string)
-const kp2 = resolveKeypair(process.env.STELLAR_SECRET!);
+// Standard path: load the secret from a file passed via --secret-file
+// (default: .stellar-secret). Never read secrets from shell environment
+// variables — they leak into shell history and ps aux output.
+const secret = loadSecretFromFile(".stellar-secret");
+const kp = Keypair.fromSecret(secret);
 
 // Generate new — DO NOT print the secret to stdout.
-// Use scripts/generate-keypair.ts which writes to .env directly.
+// Use scripts/generate-keypair.ts which writes directly to disk.
 const newKp = Keypair.random();
 console.log("Generated pubkey:", newKp.publicKey());
-// newKp.secret() should be written straight to a .env file with mode 600,
-// never printed or sent to any network/telemetry destination.
+// newKp.secret() should be written straight to a file with mode 600,
+// never printed or sent anywhere.
 ```
 
 ## RPC client
@@ -85,9 +85,11 @@ const response = await paidFetch("https://some-api.example/paid-endpoint");
 ```typescript
 import { stellar } from "@stellar/mpp/charge/client";
 import { Mppx } from "mppx/client";
+import { loadSecretFromFile } from "../scripts/src/secret.js";
 
+const secret = loadSecretFromFile(".stellar-secret");
 const mppx = new Mppx({
-  methods: [stellar.charge({ secret: process.env.STELLAR_SECRET! })],
+  methods: [stellar.charge({ secret })],
 });
 
 const response = await mppx.fetch("https://some-mpp-server.example/paid-endpoint");

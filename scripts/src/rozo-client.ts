@@ -1,10 +1,9 @@
 /**
  * Rozo intent API client — pure library, hardcoded API_BASE.
  *
- * No process.env reads in this file. If a caller needs to override
- * the base URL for a self-hosted Rozo, they must pass it as a function
- * argument to the exported functions — but the CLI entry points
- * generally do not expose that override.
+ * If a caller needs to override the base URL for a self-hosted Rozo,
+ * they must edit this file directly. CLI entry points do not expose
+ * that override.
  */
 
 const API_BASE = "https://intentapiv4.rozo.ai/functions/v1/payment-api";

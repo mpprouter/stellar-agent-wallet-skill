@@ -1,7 +1,7 @@
 /**
  * MPP Router catalog client — pure library, hardcoded API_BASE.
  *
- * No process.env reads. Callers pass all arguments explicitly.
+ * Callers pass all arguments explicitly; this module takes no external state.
  */
 
 const API_BASE = "https://apiserver.mpprouter.dev";
