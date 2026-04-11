@@ -1,0 +1,26 @@
+# Secrets
+.env
+.env.local
+.env.*.local
+
+# Dependencies (this is a skill package — no deps expected, but guard anyway)
+node_modules/
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*

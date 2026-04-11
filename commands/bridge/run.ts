@@ -1,0 +1,99 @@
+/**
+ * bridge — move Stellar USDC to another chain (your own address).
+ *
+ * Thin wrapper around send-payment/run.ts. Destination is always a wallet
+ * owned by the user, not a counterparty.
+ *
+ * Usage:
+ *   npx tsx commands/bridge/run.ts --chain <chain> --amount <decimal> --my-address <addr>
+ *
+ * Example:
+ *   npx tsx commands/bridge/run.ts --chain base --amount 50 --my-address 0xAbCd...
+ */
+
+import "dotenv/config";
+import { spawn } from "node:child_process";
+import * as path from "node:path";
+
+type Chain = "ethereum" | "arbitrum" | "base" | "bsc" | "polygon" | "solana";
+
+const VALID_CHAINS: Chain[] = [
+  "ethereum",
+  "arbitrum",
+  "base",
+  "bsc",
+  "polygon",
+  "solana",
+];
+
+interface Args {
+  chain?: Chain;
+  amount?: string;
+  myAddress?: string;
+  token: "USDC" | "USDT";
+  yes: boolean;
+}
+
+function parseArgs(): Args {
+  const argv = process.argv.slice(2);
+  const a: Args = { token: "USDC", yes: false };
+  for (let i = 0; i < argv.length; i++) {
+    const k = argv[i];
+    if (k === "--chain") a.chain = argv[++i] as Chain;
+    else if (k === "--amount") a.amount = argv[++i];
+    else if (k === "--my-address") a.myAddress = argv[++i];
+    else if (k === "--token") a.token = argv[++i] as "USDC" | "USDT";
+    else if (k === "--yes" || k === "-y") a.yes = true;
+  }
+  return a;
+}
+
+async function main() {
+  const args = parseArgs();
+
+  if (!args.chain || !VALID_CHAINS.includes(args.chain)) {
+    console.error(
+      `--chain required. Valid: ${VALID_CHAINS.join(", ")} (Stellar excluded — that's a payment, not a bridge)`,
+    );
+    process.exit(1);
+  }
+  if (!args.amount) {
+    console.error("--amount <decimal> required");
+    process.exit(1);
+  }
+  if (!args.myAddress) {
+    console.error("--my-address <destination> required (your wallet on the target chain)");
+    process.exit(1);
+  }
+
+  console.log("=== Bridge Stellar USDC → " + args.chain + " ===");
+  console.log("(delegating to send-payment)");
+  console.log("");
+
+  // Shell out to send-payment with same args
+  const sendPaymentPath = path.resolve(__dirname, "../send-payment/run.ts");
+  const childArgs = [
+    sendPaymentPath,
+    "--to",
+    args.myAddress,
+    "--chain",
+    args.chain,
+    "--token",
+    args.token,
+    "--amount",
+    args.amount,
+  ];
+  if (args.yes) childArgs.push("--yes");
+
+  const child = spawn("npx", ["tsx", ...childArgs], {
+    stdio: "inherit",
+    env: process.env,
+  });
+
+  child.on("exit", (code) => process.exit(code ?? 1));
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

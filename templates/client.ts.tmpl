@@ -1,0 +1,162 @@
+/**
+ * Unified Stellar payment signer.
+ *
+ * Produces an inner transaction XDR (base64) that:
+ *  - Invokes SAC `transfer(from, to, amount)`
+ *  - Has source account = ALL_ZEROS placeholder
+ *  - Has only Soroban auth entries signed (NOT the envelope)
+ *
+ * This single XDR can be wrapped in either:
+ *  - an x402 PaymentPayload (see x402-adapter.ts)
+ *  - an @stellar/mpp Credential (see mpp-adapter.ts)
+ */
+
+import "dotenv/config";
+import {
+  Account,
+  Address,
+  Contract,
+  Keypair,
+  Networks,
+  SorobanRpc,
+  TransactionBuilder,
+  authorizeEntry,
+  nativeToScVal,
+  xdr,
+} from "@stellar/stellar-sdk";
+
+const ALL_ZEROS_PUBKEY =
+  "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"; // 32 zero bytes, strkey-encoded
+
+export interface StellarClientConfig {
+  secret: string;
+  network: "testnet" | "pubnet";
+  rpcUrl: string;
+}
+
+export interface PaymentRequest {
+  /** SAC contract address of the asset being paid */
+  assetSac: string;
+  /** Destination G... pubkey */
+  payTo: string;
+  /** Amount in base units (i128 string). USDC = 7 decimals. */
+  amountBaseUnits: string;
+  /** Max seconds the signature is valid */
+  maxTimeoutSeconds: number;
+}
+
+export interface SignedPayment {
+  /** base64-encoded transaction XDR (unsigned envelope, signed auth entries) */
+  transactionXdr: string;
+  /** Signer's public key (G...) */
+  signerPubkey: string;
+  /** Ledger up to which the signature is valid */
+  validUntilLedger: number;
+}
+
+export class StellarPaymentSigner {
+  private readonly keypair: Keypair;
+  private readonly rpc: SorobanRpc.Server;
+  private readonly networkPassphrase: string;
+
+  constructor(config: StellarClientConfig) {
+    this.keypair = Keypair.fromSecret(config.secret);
+    this.networkPassphrase =
+      config.network === "pubnet" ? Networks.PUBLIC : Networks.TESTNET;
+    this.rpc = new SorobanRpc.Server(config.rpcUrl, { allowHttp: false });
+  }
+
+  get publicKey(): string {
+    return this.keypair.publicKey();
+  }
+
+  /**
+   * Build and sign a sponsored SAC transfer.
+   * Produces an XDR usable in both x402 and @stellar/mpp envelopes.
+   */
+  async signPayment(req: PaymentRequest): Promise<SignedPayment> {
+    const contract = new Contract(req.assetSac);
+
+    const op = contract.call(
+      "transfer",
+      nativeToScVal(Address.fromString(this.publicKey), { type: "address" }),
+      nativeToScVal(Address.fromString(req.payTo), { type: "address" }),
+      nativeToScVal(BigInt(req.amountBaseUnits), { type: "i128" }),
+    );
+
+    // Placeholder source — facilitator/server will rebuild with its own account
+    const placeholderAccount = new Account(ALL_ZEROS_PUBKEY, "0");
+
+    const builtTx = new TransactionBuilder(placeholderAccount, {
+      fee: "0",
+      networkPassphrase: this.networkPassphrase,
+    })
+      .addOperation(op)
+      .setTimeout(req.maxTimeoutSeconds)
+      .build();
+
+    // Simulate to populate Soroban auth entries + resource data
+    const sim = await this.rpc.simulateTransaction(builtTx);
+    if (SorobanRpc.Api.isSimulationError(sim)) {
+      throw new Error(`Simulation failed: ${sim.error}`);
+    }
+
+    const latestLedger = sim.latestLedger;
+    const ledgerCloseSeconds = 5; // matches stellar-mpp-sdk default
+    const validUntilLedger =
+      latestLedger + Math.ceil(req.maxTimeoutSeconds / ledgerCloseSeconds);
+
+    // Extract auth entries from simulation result
+    if (!sim.result || !sim.result.auth) {
+      throw new Error("Simulation returned no auth entries");
+    }
+
+    // Sign each auth entry (NOT the envelope)
+    const signedAuthEntries = await Promise.all(
+      sim.result.auth.map((entry: xdr.SorobanAuthorizationEntry) =>
+        authorizeEntry(
+          entry,
+          this.keypair,
+          validUntilLedger,
+          this.networkPassphrase,
+        ),
+      ),
+    );
+
+    // Rebuild operation with signed auth entries
+    // (See stellar-mpp-sdk/sdk/src/charge/client/Charge.ts:160-190 for reference)
+    const preparedTx = SorobanRpc.assembleTransaction(builtTx, sim).build();
+
+    // Replace auth on the invokeHostFunction op with our signed entries
+    const opXdr = preparedTx.operations[0] as xdr.Operation<any>;
+    const hostFnOp = opXdr.body().invokeHostFunctionOp();
+    hostFnOp.auth(signedAuthEntries);
+
+    return {
+      transactionXdr: preparedTx.toXDR(),
+      signerPubkey: this.publicKey,
+      validUntilLedger,
+    };
+  }
+}
+
+/** Construct a signer from environment variables. */
+export function signerFromEnv(): StellarPaymentSigner {
+  const secret = process.env.STELLAR_SECRET;
+  const network = (process.env.STELLAR_NETWORK ?? "testnet") as
+    | "testnet"
+    | "pubnet";
+  const rpcUrl =
+    process.env.STELLAR_RPC_URL ??
+    (network === "pubnet"
+      ? "https://mainnet.sorobanrpc.com"
+      : "https://soroban-testnet.stellar.org");
+
+  if (!secret) {
+    throw new Error(
+      "STELLAR_SECRET is required. Copy .env.example to .env and fill it in.",
+    );
+  }
+
+  return new StellarPaymentSigner({ secret, network, rpcUrl });
+}

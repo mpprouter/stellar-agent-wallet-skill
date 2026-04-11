@@ -1,0 +1,36 @@
+/**
+ * Example: call a 402-gated HTTP API with automatic Stellar payment.
+ *
+ * Usage:
+ *   pnpm tsx examples/pay-per-call.ts <URL>
+ *
+ * The example tries x402 first (via paidFetch). If you're targeting an
+ * MPP server instead, swap to the mpp client below.
+ */
+
+import "dotenv/config";
+import { paidFetch } from "../src/x402-adapter.js";
+// import { createMppClient } from "../src/mpp-adapter.js";
+
+async function main() {
+  const url = process.argv[2];
+  if (!url) {
+    console.error("Usage: pay-per-call.ts <URL>");
+    process.exit(1);
+  }
+
+  // --- x402 path -----------------------------------------------------------
+  const response = await paidFetch(url);
+  console.log(`${response.status} ${response.statusText}`);
+  console.log(await response.text());
+
+  // --- MPP path (alternative) ---------------------------------------------
+  // const mpp = createMppClient();
+  // const mppResponse = await mpp.fetch(url);
+  // console.log(await mppResponse.text());
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

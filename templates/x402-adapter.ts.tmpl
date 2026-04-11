@@ -1,0 +1,92 @@
+/**
+ * x402 envelope adapter.
+ *
+ * Takes a SignedPayment from stellar-client.ts and wraps it as an
+ * x402 PaymentPayload, suitable for the X-Payment HTTP header.
+ *
+ * Requires: @x402/stellar @x402/core
+ */
+
+import { signerFromEnv, type SignedPayment } from "./stellar-client.js";
+
+export interface X402PaymentRequirements {
+  scheme: "exact";
+  network: "stellar:testnet" | "stellar:pubnet";
+  amount: string;
+  asset: string;
+  payTo: string;
+  maxTimeoutSeconds: number;
+  extra?: { areFeesSponsored?: boolean };
+}
+
+export interface X402PaymentPayload {
+  x402Version: number;
+  scheme: "exact";
+  network: string;
+  payload: { transaction: string };
+}
+
+/**
+ * Produce an x402 PaymentPayload from PaymentRequirements.
+ *
+ * Throws if the server requires unsponsored mode — x402 spec requires
+ * areFeesSponsored=true currently.
+ */
+export async function createX402PaymentPayload(
+  requirements: X402PaymentRequirements,
+  x402Version = 1,
+): Promise<X402PaymentPayload> {
+  if (requirements.extra?.areFeesSponsored === false) {
+    throw new Error(
+      "x402 Stellar exact requires areFeesSponsored=true. " +
+        "The server advertised areFeesSponsored=false, which is not compatible.",
+    );
+  }
+
+  const signer = signerFromEnv();
+  const signed: SignedPayment = await signer.signPayment({
+    assetSac: requirements.asset,
+    payTo: requirements.payTo,
+    amountBaseUnits: requirements.amount,
+    maxTimeoutSeconds: requirements.maxTimeoutSeconds,
+  });
+
+  return {
+    x402Version,
+    scheme: "exact",
+    network: requirements.network,
+    payload: { transaction: signed.transactionXdr },
+  };
+}
+
+/**
+ * Encode a PaymentPayload for the X-Payment HTTP header.
+ */
+export function encodeX402Header(payload: X402PaymentPayload): string {
+  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64");
+}
+
+/**
+ * Fetch wrapper that handles 402 responses automatically.
+ * Retries once with a payment payload on 402.
+ */
+export async function paidFetch(
+  input: string | URL,
+  init: RequestInit = {},
+): Promise<Response> {
+  const firstAttempt = await fetch(input, init);
+  if (firstAttempt.status !== 402) return firstAttempt;
+
+  const body = await firstAttempt.json();
+  // x402 servers return { x402Version, accepts: [PaymentRequirements, ...] }
+  const requirements = body.accepts?.[0] as X402PaymentRequirements | undefined;
+  if (!requirements) {
+    throw new Error("402 response missing `accepts` field");
+  }
+
+  const payload = await createX402PaymentPayload(requirements, body.x402Version);
+  const headers = new Headers(init.headers);
+  headers.set("X-Payment", encodeX402Header(payload));
+
+  return fetch(input, { ...init, headers });
+}
