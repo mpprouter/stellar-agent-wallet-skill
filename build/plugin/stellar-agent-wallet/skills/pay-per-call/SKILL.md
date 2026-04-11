@@ -23,15 +23,35 @@ The "execute" step of the wallet agent. Call a paid HTTP endpoint, handle the 40
 ## Flow
 
 1. First attempt: plain POST/GET to the URL.
-2. Expect `402 Payment Required`. Parse the challenge:
-   - **x402 format** — response body is `{ x402Version, accepts: [PaymentRequirements] }`.
-   - **MPP Router format** — `WWW-Authenticate: Payment request=<base64-json>` header with `{ amount, currency, recipient, methodDetails }`.
+2. Expect `402 Payment Required`. Parse the challenge in this priority order:
+   1. **MPP dialect** — `WWW-Authenticate: Payment request="<base64>"` header.
+      Values may be quoted or unquoted per RFC 7235; we accept both.
+   2. **x402 v2 dialect** — `Payment-Required: <base64>` response header
+      carrying `{ x402Version, accepts: [PaymentRequirements] }`.
+   3. **x402 legacy** — same envelope but in the JSON response body
+      (older x402 servers).
 3. Both formats produce the same inner XDR (sponsored SAC transfer). We sign once.
 4. Wrap the XDR in the envelope matching the challenge:
    - x402 → base64 JSON in `X-Payment` header
    - MPP → `Authorization: Payment <credential>` header
 5. Re-POST/GET with the payment header attached.
 6. Return the response body + any `Payment-Receipt` header for auditing.
+
+### Dialect priority — when a server emits multiple
+
+MPP Router is the canonical example: a single 402 response includes
+BOTH the MPP `WWW-Authenticate` header AND the x402 `Payment-Required`
+header, with **different `payTo` addresses** for each dialect. The
+addresses are HMAC-bound to the challenge, so you can't mix them —
+pay the MPP address with an MPP credential, or the x402 address with
+an x402 envelope. Pay the wrong address and the server rejects the
+request while you still eat the on-chain fee.
+
+This skill always tries MPP first and uses the MPP address if that
+header is present. The x402 `Payment-Required` header is only used
+when the MPP header is absent. If you need to force the x402 path
+for a server that emits both, use a different client — this skill
+doesn't expose a dialect override.
 
 ## How to run
 

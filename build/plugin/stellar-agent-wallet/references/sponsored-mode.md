@@ -42,15 +42,15 @@ import {
   Contract,
   Networks,
   Operation,
-  SorobanRpc,
+  rpc,
   TransactionBuilder,
   authorizeEntry,
   nativeToScVal,
   xdr,
 } from "@stellar/stellar-sdk";
 
-// 1. Placeholder source — ALL_ZEROS
-const ALL_ZEROS = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"; // 32 zero bytes encoded
+// 1. Placeholder source — ALL_ZEROS (56-char Stellar strkey for 32 zero bytes)
+const ALL_ZEROS = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
 const sourceAccount = new Account(ALL_ZEROS, "0");
 
 // 2. Build SAC transfer invocation

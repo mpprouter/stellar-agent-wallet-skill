@@ -23,7 +23,23 @@ export interface ParsedChallenge {
   raw: unknown;
 }
 
+/**
+ * Parse a 402 response into a structured challenge.
+ *
+ * Priority order when a server emits multiple dialects (MPP Router does
+ * this — it emits both in parallel, each routed to a different payTo
+ * address via HMAC-bound credentials). We always pick MPP first:
+ *
+ *   1. MPP dialect — `WWW-Authenticate: Payment request="<base64>"` header
+ *   2. x402 dialect — `Payment-Required: <base64>` response header
+ *      (x402 v2 spec — this is the current MPP Router shape)
+ *   3. x402 legacy — `accepts[]` envelope inside the JSON response body
+ *      (older x402 servers)
+ *
+ * See skills/pay-per-call/SKILL.md for the rationale.
+ */
 export async function parse402(res: Response): Promise<ParsedChallenge | null> {
+  // 1. MPP dialect — WWW-Authenticate header.
   const wwwAuth = res.headers.get("www-authenticate");
   if (wwwAuth && wwwAuth.toLowerCase().startsWith("payment")) {
     // RFC 7235 auth-param values may be quoted or unquoted.
@@ -44,6 +60,35 @@ export async function parse402(res: Response): Promise<ParsedChallenge | null> {
     }
   }
 
+  // 2. x402 v2 dialect — Payment-Required response header.
+  //    MPP Router emits this alongside the application/problem+json body.
+  //    The header value is a base64-encoded x402 envelope
+  //    { x402Version, error, accepts: [PaymentRequirements, ...] }.
+  const paymentRequiredHeader = res.headers.get("payment-required");
+  if (paymentRequiredHeader) {
+    try {
+      const decoded = Buffer.from(paymentRequiredHeader, "base64").toString(
+        "utf8",
+      );
+      const body = JSON.parse(decoded);
+      if (body?.accepts?.[0]?.scheme === "exact") {
+        const r = body.accepts[0];
+        assertSponsored(r);
+        return {
+          dialect: "x402",
+          amount: r.amount,
+          asset: r.asset,
+          payTo: r.payTo,
+          maxTimeoutSeconds: r.maxTimeoutSeconds ?? 60,
+          raw: body,
+        };
+      }
+    } catch {
+      // header present but not a decodable x402 envelope — fall through
+    }
+  }
+
+  // 3. x402 legacy dialect — envelope inside JSON response body.
   try {
     const body: any = await res.clone().json();
     if (body?.accepts?.[0]?.scheme === "exact") {

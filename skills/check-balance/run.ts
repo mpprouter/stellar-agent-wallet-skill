@@ -18,7 +18,7 @@
 import {
   Horizon,
   Keypair,
-  SorobanRpc,
+  rpc,
   Address,
   Contract,
   nativeToScVal,
@@ -148,7 +148,7 @@ async function readSacBalance(
   accountPubkey: string,
   network: "testnet" | "pubnet",
 ): Promise<bigint | null> {
-  const rpc = new SorobanRpc.Server(rpcUrl, { allowHttp: false });
+  const server = new rpc.Server(rpcUrl, { allowHttp: false });
   const networkPassphrase =
     network === "pubnet" ? Networks.PUBLIC : Networks.TESTNET;
   const contract = new Contract(sacAddress);
@@ -164,8 +164,8 @@ async function readSacBalance(
     .setTimeout(30)
     .build();
 
-  const sim = await rpc.simulateTransaction(tx);
-  if (SorobanRpc.Api.isSimulationError(sim)) {
+  const sim = await server.simulateTransaction(tx);
+  if (rpc.Api.isSimulationError(sim)) {
     return null;
   }
   const retval = (sim as any).result?.retval;

@@ -54,14 +54,15 @@ console.log("Generated pubkey:", newKp.publicKey());
 ## RPC client
 
 ```typescript
-import { SorobanRpc } from "@stellar/stellar-sdk";
-const rpc = new SorobanRpc.Server("https://soroban-testnet.stellar.org", {
+// SDK v13+ renamed the namespace SorobanRpc -> rpc.
+import { rpc } from "@stellar/stellar-sdk";
+const server = new rpc.Server("https://soroban-testnet.stellar.org", {
   allowHttp: false,
 });
 
-await rpc.getLatestLedger();
-await rpc.getAccount(pubkey);
-await rpc.simulateTransaction(tx);
+await server.getLatestLedger();
+await server.getAccount(pubkey);
+await server.simulateTransaction(tx);
 ```
 
 ## x402 client

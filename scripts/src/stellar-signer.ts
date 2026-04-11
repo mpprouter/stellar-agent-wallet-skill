@@ -21,15 +21,30 @@ import {
   Contract,
   Keypair,
   Networks,
-  SorobanRpc,
+  StrKey,
   TransactionBuilder,
   authorizeEntry,
   nativeToScVal,
+  rpc,
   xdr,
 } from "@stellar/stellar-sdk";
 
+// Strkey for the 32-byte all-zeros ed25519 pubkey.
+// Used as a placeholder source account in sponsored simulations —
+// the facilitator rebuilds the envelope with its own source before
+// submission, so this value never appears on-chain.
+//
+// Must be exactly 56 chars. Verified at module load to fail fast
+// if this literal ever gets corrupted again.
 const ALL_ZEROS_PUBKEY =
-  "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+  "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+
+if (!StrKey.isValidEd25519PublicKey(ALL_ZEROS_PUBKEY)) {
+  throw new Error(
+    "ALL_ZEROS_PUBKEY is not a valid Stellar strkey — " +
+      "this is a compile-time bug in scripts/src/stellar-signer.ts.",
+  );
+}
 
 export interface SignerConfig {
   /** Stellar secret key (S...). Held in memory only long enough to sign. */
@@ -68,7 +83,7 @@ export async function signSacTransfer(
   const keypair = Keypair.fromSecret(config.secret);
   const networkPassphrase =
     config.network === "pubnet" ? Networks.PUBLIC : Networks.TESTNET;
-  const rpc = new SorobanRpc.Server(config.rpcUrl, { allowHttp: false });
+  const server = new rpc.Server(config.rpcUrl, { allowHttp: false });
 
   const signerPubkey = keypair.publicKey();
   const contract = new Contract(req.assetSac);
@@ -89,8 +104,8 @@ export async function signSacTransfer(
     .setTimeout(req.maxTimeoutSeconds)
     .build();
 
-  const sim = await rpc.simulateTransaction(builtTx);
-  if (SorobanRpc.Api.isSimulationError(sim)) {
+  const sim = await server.simulateTransaction(builtTx);
+  if (rpc.Api.isSimulationError(sim)) {
     throw new Error(`Simulation failed: ${sim.error}`);
   }
 
@@ -109,7 +124,7 @@ export async function signSacTransfer(
     ),
   );
 
-  const preparedTx = SorobanRpc.assembleTransaction(builtTx, sim).build();
+  const preparedTx = rpc.assembleTransaction(builtTx, sim).build();
   const opXdr = preparedTx.operations[0] as xdr.Operation<any>;
   const hostFnOp = opXdr.body().invokeHostFunctionOp();
   hostFnOp.auth(signedAuthEntries);
@@ -119,27 +134,4 @@ export async function signSacTransfer(
     signerPubkey,
     validUntilLedger,
   };
-}
-
-/**
- * Sign a raw Stellar Classic transaction (for send-payment flow,
- * which uses the payment operation not SAC transfer).
- *
- * Same secret handling contract: secret is used once and not retained.
- */
-export function signClassicTx(
-  secret: string,
-  txXdr: string,
-  networkPassphrase: string,
-): string {
-  const { TransactionBuilder: TB } = require("@stellar/stellar-sdk");
-  const kp = Keypair.fromSecret(secret);
-  const tx = TB.fromXDR(txXdr, networkPassphrase);
-  tx.sign(kp);
-  return tx.toXDR();
-}
-
-/** Derive the public key from a secret without retaining the secret. */
-export function pubkeyFromSecret(secret: string): string {
-  return Keypair.fromSecret(secret).publicKey();
 }
