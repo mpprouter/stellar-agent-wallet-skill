@@ -26,7 +26,10 @@ export interface ParsedChallenge {
 export async function parse402(res: Response): Promise<ParsedChallenge | null> {
   const wwwAuth = res.headers.get("www-authenticate");
   if (wwwAuth && wwwAuth.toLowerCase().startsWith("payment")) {
-    const match = wwwAuth.match(/request=([A-Za-z0-9+/=_-]+)/);
+    // RFC 7235 auth-param values may be quoted or unquoted.
+    // MPP Router emits `Payment request="<base64>"`; older/simpler
+    // servers emit `Payment request=<base64>`. Accept both.
+    const match = wwwAuth.match(/request="?([A-Za-z0-9+/=_-]+)"?/);
     if (match) {
       const decoded = Buffer.from(match[1], "base64url").toString("utf8");
       const challenge = JSON.parse(decoded);

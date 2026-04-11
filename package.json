@@ -6,5 +6,9 @@
     "build:skill": "node plugin/build-skill.mjs",
     "build:plugin": "node plugin/build-plugin.mjs",
     "build:all": "npm run build:skill && npm run build:plugin"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^15.0.1",
+    "tsx": "^4.21.0"
   }
 }
