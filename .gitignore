@@ -15,8 +15,15 @@ yarn.lock
 
 # Build output
 dist/
-build/
 *.tsbuildinfo
+
+# build/skill/  — local convenience output, regenerable, uploaded manually
+#                 to the skill marketplace. Not committed.
+# build/plugin/ — PUBLISHED plugin artifact, referenced by the repo-root
+#                 .claude-plugin/marketplace.json via git-subdir source.
+#                 COMMITTED to git so users can install via
+#                 /plugin marketplace add mpprouter/stellar-agent-wallet-skill
+build/skill/
 
 # Editor / OS
 .DS_Store
