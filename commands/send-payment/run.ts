@@ -215,7 +215,7 @@ async function main() {
   const args = parseArgs();
   const v = validate(args);
 
-  const network = (process.env.STELLAR_NETWORK ?? "testnet") as "testnet" | "pubnet";
+  const network = (process.env.STELLAR_NETWORK ?? "pubnet") as "testnet" | "pubnet";
   if (network !== "pubnet") {
     console.error(
       "⚠️  Rozo intent API operates on mainnet. Set STELLAR_NETWORK=pubnet in .env.",

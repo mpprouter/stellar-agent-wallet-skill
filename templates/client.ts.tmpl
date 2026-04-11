@@ -143,7 +143,7 @@ export class StellarPaymentSigner {
 /** Construct a signer from environment variables. */
 export function signerFromEnv(): StellarPaymentSigner {
   const secret = process.env.STELLAR_SECRET;
-  const network = (process.env.STELLAR_NETWORK ?? "testnet") as
+  const network = (process.env.STELLAR_NETWORK ?? "pubnet") as
     | "testnet"
     | "pubnet";
   const rpcUrl =

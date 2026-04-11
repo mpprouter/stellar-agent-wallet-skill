@@ -55,7 +55,7 @@ npx tsx commands/pay-per-call/run.ts <url> --receipt-out receipt.json
 ## Safety
 
 - ✅ **Credentials are single-use** — if the first retry fails, the credential is burned. Don't blindly re-retry; start fresh.
-- ✅ **Confirmation on mainnet above threshold** — by default, pubnet calls above $0.10 prompt for confirmation. Override with `--yes` or `--max-auto <usd>`.
+- ✅ **Confirmation on mainnet above threshold** — by default, pubnet calls above $1.00 prompt for confirmation. Override with `--yes` or `--max-auto <usd>`.
 - ✅ **Amount validation** — script verifies the 402 challenge amount matches the advertised service price (if known from catalog).
 - ❌ **Don't reuse a credential** — the HMAC binding to amount/currency/recipient is the router's defense against replay.
 

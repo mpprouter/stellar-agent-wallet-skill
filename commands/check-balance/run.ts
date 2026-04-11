@@ -44,7 +44,7 @@ async function main() {
   const args = process.argv.slice(2).filter((a) => a !== "--json");
   const jsonOutput = process.argv.includes("--json");
 
-  const network = (process.env.STELLAR_NETWORK ?? "testnet") as
+  const network = (process.env.STELLAR_NETWORK ?? "pubnet") as
     | "testnet"
     | "pubnet";
   const horizonUrl =

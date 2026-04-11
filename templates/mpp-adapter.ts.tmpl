@@ -19,7 +19,7 @@ import { Mppx } from "mppx/client";
  */
 export function createMppClient() {
   const secret = process.env.STELLAR_SECRET;
-  const network = (process.env.STELLAR_NETWORK ?? "testnet") as
+  const network = (process.env.STELLAR_NETWORK ?? "pubnet") as
     | "testnet"
     | "pubnet";
   const rpcUrl =

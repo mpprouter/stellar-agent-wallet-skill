@@ -11,11 +11,94 @@ description: >
   api with stellar", or when the user shares a G... address with a payment intent.
 metadata:
   author: stellar-agent-wallet
-  version: 0.2.0
+  version: 1.0.1
+  license: MIT
   runtime: node
+
+  # Runtime dependencies the user's scaffolded project must install.
+  # The skill itself does not ship node_modules; the scaffold step
+  # adds these to the user's project.
+  dependencies:
+    required:
+      - "@stellar/stellar-sdk"
+      - dotenv
+      - tsx
+    optional:
+      - "@stellar/mpp"   # MPP envelope (charge mode)
+      - mppx              # MPP envelope (charge mode)
+      - "@x402/stellar"  # x402 envelope
+      - "@x402/core"     # x402 envelope
+
+  # Environment variables the skill reads at runtime.
+  # STELLAR_SECRET is a wallet private key — treat as sensitive.
+  env:
+    required:
+      STELLAR_SECRET:
+        description: >
+          Stellar secret key (S...) used to sign on-chain payment transactions.
+          THIS IS A WALLET PRIVATE KEY. Use a dedicated hot wallet with a
+          limited balance — never your main account. Never paste into a UI
+          you do not fully control.
+        sensitive: true
+    optional:
+      STELLAR_NETWORK:
+        description: "testnet or pubnet"
+        default: pubnet
+        warning: >
+          Default is pubnet (mainnet). If unset, all transactions move real
+          funds. Set STELLAR_NETWORK=testnet explicitly when prototyping.
+      STELLAR_HORIZON_URL:
+        description: Override Horizon REST endpoint.
+      STELLAR_RPC_URL:
+        description: Override Soroban RPC endpoint.
+      STELLAR_ASSET_SAC:
+        description: Stellar Asset Contract address for the payment token.
+      MPP_ROUTER_URL:
+        description: Override MPP Router catalog endpoint.
+      ROZO_INTENT_URL:
+        description: Override Rozo cross-chain intent API endpoint.
+
+  # Commands that move funds. Each of these requires user confirmation
+  # above the threshold below (readline prompt, unless --yes passed).
+  spending_commands:
+    - pay-per-call
+    - send-payment
+    - bridge
+  spending_confirmation_threshold_usd: 1.0
+
+  # Network endpoints this skill contacts.
+  network_endpoints:
+    - apiserver.mpprouter.dev       # MPP Router catalog
+    - intentapiv4.rozo.ai            # Rozo cross-chain intents
+    - horizon.stellar.org            # Stellar Horizon (pubnet)
+    - horizon-testnet.stellar.org    # Stellar Horizon (testnet)
+    - mainnet.sorobanrpc.com         # Soroban RPC (pubnet)
+    - soroban-testnet.stellar.org    # Soroban RPC (testnet)
 ---
 
 # stellar-agent-wallet
+
+> ⚠️ **SECURITY — READ BEFORE INSTALL**
+>
+> This skill is a **Stellar wallet**. It signs on-chain transactions using
+> `STELLAR_SECRET` — a private key that can move real funds. Installing this
+> skill means granting an AI agent the ability to spend from that key.
+>
+> - **Use a dedicated hot wallet with a limited balance.** Never your main account.
+> - **Default network is `pubnet` (mainnet).** If you do not set
+>   `STELLAR_NETWORK=testnet`, every transaction moves real USDC. This is
+>   intentional but unforgiving — export `STELLAR_NETWORK=testnet` while
+>   prototyping.
+> - **Never paste `STELLAR_SECRET` into any UI or chat you do not fully control.**
+>   Put it in a local `.env` file only.
+> - **Spending commands (`pay-per-call`, `send-payment`, `bridge`) prompt for
+>   confirmation above $1 USD** and every time on mainnet for `send-payment` /
+>   `bridge`. Pass `--yes` only after testing on testnet.
+> - `pay-per-call` will pay *any* URL you point it at. Only use it against
+>   services you trust — a hostile 402 response can set the recipient to any
+>   address.
+>
+> See `references/mainnet-checklist.md` before pointing this at real money.
 
 Client-only Stellar wallet for AI agents. Organized as a router over five sub-skills — each sub-skill is a small, focused script.
 

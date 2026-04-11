@@ -25,7 +25,7 @@ interface Args {
 
 function parseArgs(): Args {
   const argv = process.argv.slice(2);
-  const a: Args = { method: "GET", json: false, yes: false, maxAutoUsd: 0.1 };
+  const a: Args = { method: "GET", json: false, yes: false, maxAutoUsd: 1.0 };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
     if (k === "--method") a.method = argv[++i];
@@ -96,6 +96,29 @@ async function signInnerXdr(challenge: ParsedChallenge): Promise<{
   transactionXdr: string;
   signerPubkey: string;
 }> {
+  // Prerequisite check: the scaffolded signer must exist in the user's project.
+  // This file is copied from templates/client.ts.tmpl during the skill's
+  // scaffold step. If it's missing, give a clear error pointing at that step
+  // rather than a cryptic ERR_MODULE_NOT_FOUND.
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const srcDir = path.join(process.cwd(), "src");
+  const candidates = ["stellar-client.ts", "stellar-client.js"];
+  const found = candidates.find((f) => fs.existsSync(path.join(srcDir, f)));
+  if (!found) {
+    throw new Error(
+      [
+        "pay-per-call requires a scaffolded signer at src/stellar-client.{ts,js}",
+        "but none was found in " + srcDir + ".",
+        "",
+        "Run the scaffold step from the skill's SKILL.md before calling pay-per-call:",
+        "  cp <skill>/templates/client.ts.tmpl ./src/stellar-client.ts",
+        "",
+        "Then `pnpm add @stellar/stellar-sdk dotenv` in this project.",
+      ].join("\n"),
+    );
+  }
+
   // Import the scaffolded client (expected path after skill scaffolds files)
   const clientModule = await import(
     /* @vite-ignore */ process.cwd() + "/src/stellar-client.js"
@@ -172,7 +195,7 @@ async function main() {
   }
 
   // Quote display
-  const network = (process.env.STELLAR_NETWORK ?? "testnet") as "testnet" | "pubnet";
+  const network = (process.env.STELLAR_NETWORK ?? "pubnet") as "testnet" | "pubnet";
   const humanAmount = (Number(challenge.amount) / 10_000_000).toFixed(7);
   console.error(`💸 Payment required (${challenge.dialect})`);
   console.error(`   Amount: ${humanAmount} USDC`);

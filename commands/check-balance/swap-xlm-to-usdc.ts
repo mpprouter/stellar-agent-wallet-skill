@@ -105,7 +105,7 @@ async function main() {
   const secret = process.env.STELLAR_SECRET;
   if (!secret) throw new Error("STELLAR_SECRET required in .env");
 
-  const network = (process.env.STELLAR_NETWORK ?? "testnet") as
+  const network = (process.env.STELLAR_NETWORK ?? "pubnet") as
     | "testnet"
     | "pubnet";
   const horizonUrl =
