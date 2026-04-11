@@ -5,7 +5,8 @@
   "scripts": {
     "build:skill": "node plugin/build-skill.mjs",
     "build:plugin": "node plugin/build-plugin.mjs",
-    "build:all": "npm run build:skill && npm run build:plugin"
+    "build:all": "npm run build:skill && npm run build:plugin",
+    "test:sign": "tsx scripts/smoke-test-sign.ts"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^15.0.1",

@@ -125,12 +125,29 @@ export async function signSacTransfer(
   );
 
   const preparedTx = rpc.assembleTransaction(builtTx, sim).build();
-  const opXdr = preparedTx.operations[0] as xdr.Operation<any>;
-  const hostFnOp = opXdr.body().invokeHostFunctionOp();
-  hostFnOp.auth(signedAuthEntries);
+
+  // Patch the signed auth entries onto the host function op.
+  //
+  // In SDK v15, preparedTx.operations[0] is a high-level Operation object
+  // ({ type, func, auth }) with NO .body() method and no toXDR path that
+  // re-serializes mutations. So we round-trip through the transaction
+  // envelope XDR, where operations[] are xdr.Operation instances that
+  // expose .body().invokeHostFunctionOp().auth(...).
+  //
+  // Probe-verified against @stellar/stellar-sdk@15.0.1:
+  //   envelope.switch().name === "envelopeTypeTx"
+  //   envelope.v1().tx().operations()[0].body().invokeHostFunctionOp().auth
+  const envelope = preparedTx.toEnvelope();
+  envelope
+    .v1()
+    .tx()
+    .operations()[0]
+    .body()
+    .invokeHostFunctionOp()
+    .auth(signedAuthEntries);
 
   return {
-    transactionXdr: preparedTx.toXDR(),
+    transactionXdr: envelope.toXDR("base64"),
     signerPubkey,
     validUntilLedger,
   };

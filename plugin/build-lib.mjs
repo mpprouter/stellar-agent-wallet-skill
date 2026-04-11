@@ -34,7 +34,7 @@ export function cleanDir(dir) {
   mkdirSync(dir, { recursive: true });
 }
 
-/** Copy a tree (file or dir) into dest, skipping common junk. */
+/** Copy a tree (file or dir) into dest, skipping common junk and dev-only files. */
 export function copyTree(src, dest) {
   cpSync(src, dest, {
     recursive: true,
@@ -43,6 +43,11 @@ export function copyTree(src, dest) {
       if (base === ".DS_Store") return false;
       if (base === "node_modules") return false;
       if (base && base.endsWith(".d.ts")) return false;
+      // Dev-only files: smoke tests, probe scripts. These require real
+      // network access to Friendbot + Soroban testnet and have no business
+      // shipping inside a user-installed plugin.
+      if (base && base.startsWith("smoke-test-")) return false;
+      if (base && base.startsWith("probe-")) return false;
       return true;
     },
   });
