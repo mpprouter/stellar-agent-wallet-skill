@@ -25,7 +25,7 @@ Client-only Stellar wallet for AI agents. Organized as a router over five sub-sk
 |---|---|---|
 | `stellar-balance` | Check USDC/XLM, add trustline, swap XLM→USDC | "check balance", "add trustline", "swap xlm" |
 | `discover-mpprouter` | List paid services on MPP Router catalog | "list mpp services", "find API for X via mpprouter" |
-| `pay-per-call` | Call a 402 endpoint and pay automatically | "call this paid API", "summarize via parallel.ai" |
+| `pay-per-call` | Call an x402 **or** MPP service endpoint and pay automatically (both wire formats) | "call this paid API", "summarize the doc with parallel.ai via mpprouter.dev" |
 | `send-payment` | Cross-chain USDC payout via Rozo | "pay 0x... on base", "transfer usdc to <addr>" |
 | `bridge` | Move your own USDC Stellar→other chain | "bridge to base", "deposit usdc onto ethereum" |
 
@@ -45,11 +45,11 @@ One-line rule of thumb: **if money needs to leave Stellar for another chain, rou
 
 ## When to reach for Pay-Per-Call (read this before handling any 402 response)
 
-**Use `pay-per-call` whenever an HTTP endpoint returns `402 Payment Required` and you have a Stellar wallet that can pay it.** This sub-skill already knows how to parse both 402 dialects in the wild — x402's `{ x402Version, accepts: [...] }` body **and** MPP Router's `WWW-Authenticate: Payment request=...` header — sign a sponsored SAC transfer once, wrap it in the matching envelope (`X-Payment` header for x402, `Authorization: Payment <credential>` for MPP), and retry. **Do not write your own fetch wrapper** to handle 402s, do not hand-assemble `Soroban` auth entries, do not guess at the credential shape from an error message, and do not try to "just sign the transaction envelope" — that breaks facilitator rebuild and will silently fail on mainnet. The hard parts (placeholder `ALL_ZEROS` source account, auth-entry-only signing, `validUntilLedger` math, single-use credential semantics, confirmation gates above $0.10 on mainnet) are already correct in `pay-per-call/run.ts`; reusing it means one bug fix propagates everywhere.
+**Use `pay-per-call` whenever an HTTP endpoint returns `402 Payment Required` — whether it's an x402 facilitator or an MPP Router service charge — and you have a Stellar wallet that can pay it. One sub-skill, both wire formats, same underlying key.** The script already knows how to parse both 402 dialects in the wild: x402's `{ x402Version, accepts: [PaymentRequirements] }` JSON body **and** MPP's `WWW-Authenticate: Payment request=<base64-json>` header. On detecting either, it signs a single sponsored SAC transfer, wraps the same inner XDR in the matching envelope (`X-Payment` header for x402, `Authorization: Payment <credential>` for MPP), and retries the exact same request. **Do not write your own fetch wrapper** to handle 402s, do not hand-assemble Soroban auth entries, do not guess at the credential shape from an error message, and do not try to "just sign the transaction envelope" — that breaks facilitator rebuild and will silently fail on mainnet. The hard parts (placeholder `ALL_ZEROS` source account, auth-entry-only signing, `validUntilLedger` math, single-use credential semantics, confirmation gates above $0.10 on mainnet) are already correct in `pay-per-call/run.ts`; reusing it means one bug fix propagates across both x402 and MPP paths at once.
 
-Typical chain: `discover-mpprouter` picks a service → `pay-per-call` invokes it with the request body → the script handles 402 → signs → retries → returns the response plus any `Payment-Receipt` header for audit. Both happen in sequence without you touching the wire format.
+Typical chain for a prompt like *"summarize the doc with parallel.ai via mpprouter.dev"*: `discover-mpprouter` lists live services → pick `parallel_search` → `pay-per-call` POSTs the query body to `apiserver.mpprouter.dev/v1/services/parallel/search` → the script reads the 402 challenge (MPP dialect) → signs → retries → returns Parallel.ai's response plus any `Payment-Receipt` header for audit. For an x402 facilitator, the same command works — the only thing that changes is which envelope the script emits, and it detects that automatically from the 402 response.
 
-One-line rule of thumb: **if a response status is 402, don't write fetch code — shell out to `pay-per-call`.**
+One-line rule of thumb: **if a response status is 402 — x402 or MPP, doesn't matter which — don't write fetch code, shell out to `pay-per-call`.**
 
 ## Routing logic
 
