@@ -132,8 +132,10 @@ Request body is fixed to `appId: "rozoAgent"`. `type: "exactOut"` means the reci
 ## Env vars
 
 ```
-ROZO_INTENT_URL=https://intentapiv4.rozo.ai/functions/v1/payment-api
-STELLAR_SECRET=S...
-STELLAR_NETWORK=pubnet
-STELLAR_HORIZON_URL=https://horizon.stellar.org
+STELLAR_SECRET=S...                      # required
+STELLAR_NETWORK=pubnet                    # optional, default pubnet
+STELLAR_HORIZON_URL=https://horizon.stellar.org   # optional
 ```
+
+The Rozo API base URL is hardcoded in `scripts/src/rozo-client.ts` —
+there is no env override.

@@ -2,18 +2,31 @@
  * pay-per-call — call a 402-gated endpoint and pay with Stellar USDC.
  *
  * Supports two 402 dialects:
- *   1. x402 — { x402Version, accepts: [PaymentRequirements] } in response body
- *   2. MPP Router — WWW-Authenticate: Payment request=<base64-json> header
- *
- * Both produce the same sponsored SAC transfer XDR; only the envelope differs.
+ *   1. x402 — body contains { x402Version, accepts: [PaymentRequirements] }
+ *   2. MPP  — WWW-Authenticate: Payment request=<base64-json> header
  *
  * Usage:
- *   npx tsx commands/pay-per-call/run.ts <url> [--method POST] [--body '{}'] [--json] [--yes]
+ *   npx tsx commands/pay-per-call/run.ts <url> [--method POST] [--body '{}'] [--yes]
+ *                                        [--max-auto <usd>] [--receipt-out <path>]
+ *                                        [--json]
+ *
+ * Env contract (loaded via loadSecret + readNetworkConfig, NOT in fetch scope):
+ *   STELLAR_SECRET       required — signing key
+ *   STELLAR_NETWORK      optional — "testnet" or "pubnet" (default: pubnet)
+ *   STELLAR_RPC_URL      optional — Soroban RPC override
  */
 
 import "dotenv/config";
+import { loadSecret } from "../../scripts/src/secret.js";
+import {
+  parse402,
+  buildRetryHeaders,
+  baseUnitsToUsdc,
+  type ParsedChallenge,
+} from "../../scripts/src/pay-engine.js";
+import type { SignerConfig } from "../../scripts/src/stellar-signer.js";
 
-interface Args {
+interface CliArgs {
   url?: string;
   method: string;
   body?: string;
@@ -23,9 +36,9 @@ interface Args {
   receiptOut?: string;
 }
 
-function parseArgs(): Args {
+function parseArgs(): CliArgs {
   const argv = process.argv.slice(2);
-  const a: Args = { method: "GET", json: false, yes: false, maxAutoUsd: 1.0 };
+  const a: CliArgs = { method: "GET", json: false, yes: false, maxAutoUsd: 1.0 };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
     if (k === "--method") a.method = argv[++i];
@@ -39,205 +52,103 @@ function parseArgs(): Args {
   return a;
 }
 
-interface ParsedChallenge {
-  dialect: "x402" | "mpp";
-  amount: string; // base units i128 string
-  asset: string;  // SAC contract address
-  payTo: string;
-  maxTimeoutSeconds: number;
-  raw: unknown;
+/**
+ * Read the non-secret network config from env.
+ *
+ * Kept separate from secret loading (loadSecret) and from any function
+ * that calls fetch. This helper's only job is translate env → plain config.
+ */
+function readNetworkConfig(): { network: "testnet" | "pubnet"; rpcUrl: string } {
+  const network = (process.env.STELLAR_NETWORK ?? "pubnet") as
+    | "testnet"
+    | "pubnet";
+  const rpcUrl =
+    process.env.STELLAR_RPC_URL ??
+    (network === "pubnet"
+      ? "https://mainnet.sorobanrpc.com"
+      : "https://soroban-testnet.stellar.org");
+  return { network, rpcUrl };
 }
 
-async function parse402(res: Response): Promise<ParsedChallenge | null> {
-  // MPP dialect: WWW-Authenticate header
-  const wwwAuth = res.headers.get("www-authenticate");
-  if (wwwAuth && wwwAuth.toLowerCase().startsWith("payment")) {
-    const match = wwwAuth.match(/request=([A-Za-z0-9+/=_-]+)/);
-    if (match) {
-      const decoded = Buffer.from(match[1], "base64url").toString("utf8");
-      const challenge = JSON.parse(decoded);
-      return {
-        dialect: "mpp",
-        amount: challenge.amount,
-        asset: challenge.currency,
-        payTo: challenge.recipient,
-        maxTimeoutSeconds: challenge.methodDetails?.maxTimeoutSeconds ?? 60,
-        raw: challenge,
-      };
-    }
-  }
+async function promptConfirm(message: string): Promise<boolean> {
+  const readline = await import("node:readline/promises");
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  const ans = await rl.question(message);
+  rl.close();
+  return ans.trim().toLowerCase() === "yes";
+}
 
-  // x402 dialect: body contains { x402Version, accepts }
-  try {
-    const body: any = await res.clone().json();
-    if (body?.accepts?.[0]?.scheme === "exact") {
-      const r = body.accepts[0];
-      return {
-        dialect: "x402",
-        amount: r.amount,
-        asset: r.asset,
-        payTo: r.payTo,
-        maxTimeoutSeconds: r.maxTimeoutSeconds ?? 60,
-        raw: body,
-      };
-    }
-  } catch {
-    // not JSON
+async function dumpResponse(res: Response, jsonMode: boolean) {
+  if (!res.ok) {
+    console.error(`❌ ${res.status} ${res.statusText}`);
+    console.error(await res.text());
+    process.exit(1);
   }
-
-  return null;
+  const ctype = res.headers.get("content-type") ?? "";
+  if (ctype.includes("application/json")) {
+    const json = await res.json();
+    console.log(jsonMode ? JSON.stringify(json) : JSON.stringify(json, null, 2));
+  } else {
+    console.log(await res.text());
+  }
 }
 
 /**
- * Sign the inner XDR using the client.ts signer from templates/.
- * At runtime, this is scaffolded as src/stellar-client.ts in the user's project.
+ * Actual payment flow. Takes a fully-constructed signerConfig as a
+ * parameter — this function does NOT read process.env. All network I/O
+ * lives here; config loading is done by the caller.
  */
-async function signInnerXdr(challenge: ParsedChallenge): Promise<{
-  transactionXdr: string;
-  signerPubkey: string;
-}> {
-  // Prerequisite check: the scaffolded signer must exist in the user's project.
-  // This file is copied from templates/client.ts.tmpl during the skill's
-  // scaffold step. If it's missing, give a clear error pointing at that step
-  // rather than a cryptic ERR_MODULE_NOT_FOUND.
-  const fs = await import("node:fs");
-  const path = await import("node:path");
-  const srcDir = path.join(process.cwd(), "src");
-  const candidates = ["stellar-client.ts", "stellar-client.js"];
-  const found = candidates.find((f) => fs.existsSync(path.join(srcDir, f)));
-  if (!found) {
-    throw new Error(
-      [
-        "pay-per-call requires a scaffolded signer at src/stellar-client.{ts,js}",
-        "but none was found in " + srcDir + ".",
-        "",
-        "Run the scaffold step from the skill's SKILL.md before calling pay-per-call:",
-        "  cp <skill>/templates/client.ts.tmpl ./src/stellar-client.ts",
-        "",
-        "Then `pnpm add @stellar/stellar-sdk dotenv` in this project.",
-      ].join("\n"),
-    );
-  }
-
-  // Import the scaffolded client (expected path after skill scaffolds files)
-  const clientModule = await import(
-    /* @vite-ignore */ process.cwd() + "/src/stellar-client.js"
-  ).catch(() =>
-    import(/* @vite-ignore */ process.cwd() + "/src/stellar-client.ts"),
-  );
-  const signer = clientModule.signerFromEnv();
-  const signed = await signer.signPayment({
-    assetSac: challenge.asset,
-    payTo: challenge.payTo,
-    amountBaseUnits: challenge.amount,
-    maxTimeoutSeconds: challenge.maxTimeoutSeconds,
-  });
-  return signed;
-}
-
-function encodeX402Header(
-  transactionXdr: string,
-  network: string,
-  x402Version: number,
-): string {
-  const payload = {
-    x402Version,
-    scheme: "exact",
-    network,
-    payload: { transaction: transactionXdr },
-  };
-  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64");
-}
-
-function encodeMppHeader(
-  transactionXdr: string,
-  signerPubkey: string,
-  challenge: any,
-): string {
-  // MPP Authorization: Payment <base64-json-credential>
-  // Credential shape matches mppx Credential envelope for stellar charge mode.
-  const credential = {
-    type: "transaction",
-    transaction: transactionXdr,
-    source: `did:pkh:stellar:${challenge.methodDetails?.network ?? "pubnet"}:${signerPubkey}`,
-    challenge: challenge.challenge ?? null,
-  };
-  return "Payment " + Buffer.from(JSON.stringify(credential), "utf8").toString("base64");
-}
-
-async function main() {
-  const args = parseArgs();
-  if (!args.url) {
-    console.error("Usage: pay-per-call.ts <url> [--method POST] [--body '{...}']");
-    process.exit(1);
-  }
-
+async function runPayFlow(
+  args: CliArgs,
+  signerConfig: SignerConfig,
+): Promise<void> {
   const init: RequestInit = {
     method: args.method,
-    headers: args.body
-      ? { "Content-Type": "application/json" }
-      : undefined,
+    headers: args.body ? { "Content-Type": "application/json" } : undefined,
     body: args.body,
   };
 
-  // First attempt
-  let res = await fetch(args.url, init);
+  let res = await fetch(args.url!, init);
   if (res.status !== 402) {
-    await dumpResponse(res, args);
+    await dumpResponse(res, args.json);
     return;
   }
 
-  const challenge = await parse402(res);
+  const challenge: ParsedChallenge | null = await parse402(res);
   if (!challenge) {
     console.error("❌ Got 402 but could not parse challenge.");
     console.error("   Body:", await res.text());
     process.exit(1);
   }
 
-  // Quote display
-  const network = (process.env.STELLAR_NETWORK ?? "pubnet") as "testnet" | "pubnet";
-  const humanAmount = (Number(challenge.amount) / 10_000_000).toFixed(7);
+  const humanAmount = baseUnitsToUsdc(challenge.amount);
   console.error(`💸 Payment required (${challenge.dialect})`);
   console.error(`   Amount: ${humanAmount} USDC`);
   console.error(`   To:     ${challenge.payTo}`);
   console.error(`   Asset:  ${challenge.asset}`);
   console.error("");
 
-  // Confirmation gate for mainnet above threshold
   const amountUsd = parseFloat(humanAmount);
-  if (network === "pubnet" && !args.yes && amountUsd > args.maxAutoUsd) {
-    const readline = await import("node:readline/promises");
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    const ans = await rl.question(`Pay $${humanAmount} USDC on mainnet? (yes/no) `);
-    rl.close();
-    if (ans.trim().toLowerCase() !== "yes") {
+  if (signerConfig.network === "pubnet" && !args.yes && amountUsd > args.maxAutoUsd) {
+    const ok = await promptConfirm(
+      `Pay $${humanAmount} USDC on mainnet? (yes/no) `,
+    );
+    if (!ok) {
       console.error("Aborted.");
       process.exit(0);
     }
   }
 
-  // Sign
-  const signed = await signInnerXdr(challenge);
+  const retryHeaders = await buildRetryHeaders({
+    challenge,
+    signerConfig,
+    baseHeaders: init.headers,
+  });
+  res = await fetch(args.url!, { ...init, headers: retryHeaders });
 
-  // Wrap + retry
-  const retryHeaders = new Headers(init.headers);
-  if (challenge.dialect === "x402") {
-    const caip2 = network === "pubnet" ? "stellar:pubnet" : "stellar:testnet";
-    const x402Version = (challenge.raw as any)?.x402Version ?? 1;
-    retryHeaders.set(
-      "X-Payment",
-      encodeX402Header(signed.transactionXdr, caip2, x402Version),
-    );
-  } else {
-    retryHeaders.set(
-      "Authorization",
-      encodeMppHeader(signed.transactionXdr, signed.signerPubkey, challenge.raw),
-    );
-  }
-
-  res = await fetch(args.url, { ...init, headers: retryHeaders });
-
-  // Receipt
   const receipt = res.headers.get("payment-receipt");
   if (receipt && args.receiptOut) {
     const fs = await import("node:fs/promises");
@@ -247,23 +158,29 @@ async function main() {
     console.error(`📝 Payment-Receipt: ${receipt}`);
   }
 
-  await dumpResponse(res, args);
+  await dumpResponse(res, args.json);
 }
 
-async function dumpResponse(res: Response, args: Args) {
-  if (!res.ok) {
-    console.error(`❌ ${res.status} ${res.statusText}`);
-    console.error(await res.text());
+/**
+ * Entry point. CLI parsing + env loading ONLY — no fetch calls.
+ * Hands a fully-constructed signerConfig to runPayFlow.
+ */
+async function main() {
+  const args = parseArgs();
+  if (!args.url) {
+    console.error("Usage: pay-per-call.ts <url> [--method POST] [--body '{...}']");
     process.exit(1);
   }
 
-  const ctype = res.headers.get("content-type") ?? "";
-  if (ctype.includes("application/json")) {
-    const json = await res.json();
-    console.log(args.json ? JSON.stringify(json) : JSON.stringify(json, null, 2));
-  } else {
-    console.log(await res.text());
-  }
+  const secret = loadSecret();
+  const netCfg = readNetworkConfig();
+  const signerConfig: SignerConfig = {
+    secret,
+    network: netCfg.network,
+    rpcUrl: netCfg.rpcUrl,
+  };
+
+  await runPayFlow(args, signerConfig);
 }
 
 main().catch((err) => {

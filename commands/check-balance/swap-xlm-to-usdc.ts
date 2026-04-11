@@ -29,6 +29,26 @@ import {
   BASE_FEE,
 } from "@stellar/stellar-sdk";
 import * as readline from "node:readline/promises";
+import { loadSecret } from "../../scripts/src/secret.js";
+
+interface RuntimeConfig {
+  secret: string;
+  network: "testnet" | "pubnet";
+  horizonUrl: string;
+}
+
+function readConfig(): RuntimeConfig {
+  const secret = loadSecret();
+  const network = (process.env.STELLAR_NETWORK ?? "pubnet") as
+    | "testnet"
+    | "pubnet";
+  const horizonUrl =
+    process.env.STELLAR_HORIZON_URL ??
+    (network === "pubnet"
+      ? "https://horizon.stellar.org"
+      : "https://horizon-testnet.stellar.org");
+  return { secret, network, horizonUrl };
+}
 
 const USDC_ISSUERS: Record<string, string> = {
   testnet: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
@@ -99,27 +119,18 @@ async function confirm(prompt: string): Promise<boolean> {
   return ans.trim().toLowerCase() === "yes";
 }
 
-async function main() {
-  const args = parseArgs();
-
-  const secret = process.env.STELLAR_SECRET;
-  if (!secret) throw new Error("STELLAR_SECRET required in .env");
-
-  const network = (process.env.STELLAR_NETWORK ?? "pubnet") as
-    | "testnet"
-    | "pubnet";
-  const horizonUrl =
-    process.env.STELLAR_HORIZON_URL ??
-    (network === "pubnet"
-      ? "https://horizon.stellar.org"
-      : "https://horizon-testnet.stellar.org");
-  const passphrase = network === "pubnet" ? Networks.PUBLIC : Networks.TESTNET;
-
-  const keypair = Keypair.fromSecret(secret);
+/**
+ * Actual swap flow. NO process.env reads.
+ * Takes plain config as parameter.
+ */
+async function runSwap(args: Args, cfg: RuntimeConfig): Promise<void> {
+  const passphrase =
+    cfg.network === "pubnet" ? Networks.PUBLIC : Networks.TESTNET;
+  const keypair = Keypair.fromSecret(cfg.secret);
   const pubkey = keypair.publicKey();
-  const horizon = new Horizon.Server(horizonUrl);
+  const horizon = new Horizon.Server(cfg.horizonUrl);
 
-  const issuer = USDC_ISSUERS[network];
+  const issuer = USDC_ISSUERS[cfg.network];
   const usdc = new Asset("USDC", issuer);
 
   // Preflight: trustline must exist
@@ -140,7 +151,7 @@ async function main() {
 
   if (args.mode === "xlm") {
     // Strict-send: "I'll spend N XLM, give me as much USDC as possible"
-    console.log(`Quoting swap: spend ${args.amount} XLM → receive USDC on ${network}...`);
+    console.log(`Quoting swap: spend ${args.amount} XLM → receive USDC on ${cfg.network}...`);
     const paths = await horizon
       .strictSendPaths(Asset.native(), args.amount, [usdc])
       .call();
@@ -180,7 +191,7 @@ async function main() {
       });
   } else {
     // Strict-receive: "I want exactly N USDC, how much XLM does that cost?"
-    console.log(`Quoting swap: receive exactly ${args.amount} USDC → send XLM on ${network}...`);
+    console.log(`Quoting swap: receive exactly ${args.amount} USDC → send XLM on ${cfg.network}...`);
     const paths = await horizon
       .strictReceivePaths([Asset.native()], usdc, args.amount)
       .call();
@@ -234,7 +245,7 @@ async function main() {
       console.log("Aborted.");
       process.exit(0);
     }
-  } else if (network === "pubnet" && !args.yes) {
+  } else if (cfg.network === "pubnet" && !args.yes) {
     const ok = await confirm("Confirm mainnet swap? (yes/no) ");
     if (!ok) {
       console.log("Aborted.");
@@ -257,8 +268,14 @@ async function main() {
   console.log(`✅ Swap executed`);
   console.log(`   Tx hash: ${result.hash}`);
   console.log(
-    `   View:    https://stellar.expert/explorer/${network === "pubnet" ? "public" : "testnet"}/tx/${result.hash}`,
+    `   View:    https://stellar.expert/explorer/${cfg.network === "pubnet" ? "public" : "testnet"}/tx/${result.hash}`,
   );
+}
+
+async function main() {
+  const args = parseArgs();
+  const cfg = readConfig();
+  await runSwap(args, cfg);
 }
 
 main().catch((err) => {

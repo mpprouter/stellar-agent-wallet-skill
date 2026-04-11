@@ -1,19 +1,17 @@
 /**
  * bridge — move Stellar USDC to another chain (your own address).
  *
- * Thin wrapper around send-payment/run.ts. Destination is always a wallet
+ * Thin wrapper around send-payment. Destination is always a wallet
  * owned by the user, not a counterparty.
+ *
+ * Pure in-process import of send-payment's main() — no subprocess spawning.
  *
  * Usage:
  *   npx tsx commands/bridge/run.ts --chain <chain> --amount <decimal> --my-address <addr>
- *
- * Example:
- *   npx tsx commands/bridge/run.ts --chain base --amount 50 --my-address 0xAbCd...
  */
 
 import "dotenv/config";
-import { spawn } from "node:child_process";
-import * as path from "node:path";
+import { main as sendPaymentMain } from "../send-payment/run.js";
 
 type Chain = "ethereum" | "arbitrum" | "base" | "bsc" | "polygon" | "solana";
 
@@ -26,7 +24,7 @@ const VALID_CHAINS: Chain[] = [
   "solana",
 ];
 
-interface Args {
+interface CliArgs {
   chain?: Chain;
   amount?: string;
   myAddress?: string;
@@ -34,9 +32,9 @@ interface Args {
   yes: boolean;
 }
 
-function parseArgs(): Args {
+function parseArgs(): CliArgs {
   const argv = process.argv.slice(2);
-  const a: Args = { token: "USDC", yes: false };
+  const a: CliArgs = { token: "USDC", yes: false };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
     if (k === "--chain") a.chain = argv[++i] as Chain;
@@ -53,7 +51,8 @@ async function main() {
 
   if (!args.chain || !VALID_CHAINS.includes(args.chain)) {
     console.error(
-      `--chain required. Valid: ${VALID_CHAINS.join(", ")} (Stellar excluded — that's a payment, not a bridge)`,
+      `--chain required. Valid: ${VALID_CHAINS.join(", ")} ` +
+        `(Stellar excluded — that's a payment, not a bridge)`,
     );
     process.exit(1);
   }
@@ -62,7 +61,9 @@ async function main() {
     process.exit(1);
   }
   if (!args.myAddress) {
-    console.error("--my-address <destination> required (your wallet on the target chain)");
+    console.error(
+      "--my-address <destination> required (your wallet on the target chain)",
+    );
     process.exit(1);
   }
 
@@ -70,27 +71,16 @@ async function main() {
   console.log("(delegating to send-payment)");
   console.log("");
 
-  // Shell out to send-payment with same args
-  const sendPaymentPath = path.resolve(__dirname, "../send-payment/run.ts");
-  const childArgs = [
-    sendPaymentPath,
-    "--to",
-    args.myAddress,
-    "--chain",
-    args.chain,
-    "--token",
-    args.token,
-    "--amount",
-    args.amount,
-  ];
-  if (args.yes) childArgs.push("--yes");
-
-  const child = spawn("npx", ["tsx", ...childArgs], {
-    stdio: "inherit",
-    env: process.env,
+  // Call send-payment's main() directly with the constructed args.
+  // No subprocess, no shell, no argv rebuilding.
+  await sendPaymentMain({
+    to: args.myAddress,
+    chain: args.chain,
+    token: args.token,
+    amount: args.amount,
+    json: false,
+    yes: args.yes,
   });
-
-  child.on("exit", (code) => process.exit(code ?? 1));
 }
 
 main().catch((err) => {

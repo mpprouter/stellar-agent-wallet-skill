@@ -5,6 +5,13 @@
  *   npx tsx commands/check-balance/run.ts [G... pubkey] [--json]
  *
  * If no pubkey given, derives it from STELLAR_SECRET in .env.
+ *
+ * Env contract (loaded in readConfig, not in any fetch function):
+ *   STELLAR_NETWORK      optional (default: pubnet)
+ *   STELLAR_HORIZON_URL  optional
+ *   STELLAR_RPC_URL      optional
+ *   STELLAR_ASSET_SAC    optional
+ *   STELLAR_SECRET       optional — only if no pubkey passed on CLI
  */
 
 import "dotenv/config";
@@ -35,12 +42,24 @@ interface BalanceReport {
   spendableXlm: string;
 }
 
+interface RuntimeConfig {
+  network: "testnet" | "pubnet";
+  horizonUrl: string;
+  rpcUrl: string;
+  sacAddress?: string;
+  pubkey: string;
+  jsonOutput: boolean;
+}
+
 const CLASSIC_USDC_ISSUERS: Record<string, string> = {
   testnet: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
   pubnet: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
 };
 
-async function main() {
+/**
+ * Build the runtime config from argv + env. No fetch calls.
+ */
+function readConfig(): RuntimeConfig {
   const args = process.argv.slice(2).filter((a) => a !== "--json");
   const jsonOutput = process.argv.includes("--json");
 
@@ -70,16 +89,24 @@ async function main() {
       process.exit(1);
     }
     pubkey = Keypair.fromSecret(secret).publicKey();
+    // secret out of scope now
   }
 
-  const horizon = new Horizon.Server(horizonUrl);
+  return { network, horizonUrl, rpcUrl, sacAddress, pubkey, jsonOutput };
+}
+
+/**
+ * Runtime flow. No process.env reads.
+ * Takes plain config as an argument and performs all network I/O.
+ */
+async function runCheck(cfg: RuntimeConfig): Promise<BalanceReport> {
+  const horizon = new Horizon.Server(cfg.horizonUrl);
   const balances: BalanceLine[] = [];
   let reserveXlm = "0";
   let xlmClassic = "0";
 
-  // Classic balances via Horizon
   try {
-    const account = await horizon.loadAccount(pubkey);
+    const account = await horizon.loadAccount(cfg.pubkey);
     for (const b of account.balances) {
       if (b.asset_type === "native") {
         xlmClassic = b.balance;
@@ -87,21 +114,20 @@ async function main() {
       } else if (
         "asset_code" in b &&
         b.asset_code === "USDC" &&
-        b.asset_issuer === CLASSIC_USDC_ISSUERS[network]
+        b.asset_issuer === CLASSIC_USDC_ISSUERS[cfg.network]
       ) {
         balances.push({ asset: "USDC", amount: b.balance, source: "classic" });
       }
     }
-    // Minimum reserve = 1 XLM base + 0.5 XLM per subentry
     const subentries = account.subentry_count;
     const reserveXlmNum = 1 + 0.5 * subentries;
     reserveXlm = reserveXlmNum.toFixed(7);
   } catch (err: any) {
     if (err?.response?.status === 404) {
-      console.error(`Account ${pubkey} not found on ${network}.`);
-      if (network === "testnet") {
+      console.error(`Account ${cfg.pubkey} not found on ${cfg.network}.`);
+      if (cfg.network === "testnet") {
         console.error(
-          `Fund it: curl "https://friendbot.stellar.org?addr=${pubkey}"`,
+          `Fund it: curl "https://friendbot.stellar.org?addr=${cfg.pubkey}"`,
         );
       }
       process.exit(1);
@@ -109,23 +135,20 @@ async function main() {
     throw err;
   }
 
-  // SAC balance via Soroban RPC (only if SAC address configured)
-  if (sacAddress) {
+  if (cfg.sacAddress) {
     try {
       const sacAmount = await readSacBalance(
-        rpcUrl,
-        sacAddress,
-        pubkey,
-        network,
+        cfg.rpcUrl,
+        cfg.sacAddress,
+        cfg.pubkey,
+        cfg.network,
       );
       if (sacAmount !== null) {
-        // USDC has 7 decimals on Stellar
         const humanAmount = (Number(sacAmount) / 10_000_000).toFixed(7);
         balances.push({ asset: "USDC", amount: humanAmount, source: "sac" });
       }
     } catch (err) {
-      // SAC read is best-effort — some accounts have no SAC balance entry
-      if (!jsonOutput) {
+      if (!cfg.jsonOutput) {
         console.error(`(SAC balance read failed: ${(err as Error).message})`);
       }
     }
@@ -133,29 +156,13 @@ async function main() {
 
   const spendableXlm = (Number(xlmClassic) - Number(reserveXlm)).toFixed(7);
 
-  const report: BalanceReport = {
-    account: pubkey,
-    network,
+  return {
+    account: cfg.pubkey,
+    network: cfg.network,
     balances,
     reserveXlm,
     spendableXlm,
   };
-
-  if (jsonOutput) {
-    console.log(JSON.stringify(report, null, 2));
-    return;
-  }
-
-  console.log(`Account: ${pubkey}`);
-  console.log(`Network: ${network}`);
-  console.log("");
-  for (const b of balances) {
-    const tag = b.source === "sac" ? "(SAC — Soroban)" : "(Classic)";
-    console.log(`  ${b.asset.padEnd(6)} ${b.amount.padStart(14)}    ${tag}`);
-  }
-  console.log("");
-  console.log(`Reserves: ${reserveXlm} XLM`);
-  console.log(`Spendable XLM: ${spendableXlm}`);
 }
 
 async function readSacBalance(
@@ -174,7 +181,6 @@ async function readSacBalance(
     nativeToScVal(Address.fromString(accountPubkey), { type: "address" }),
   );
 
-  // Simulation does not require a real source — use the account itself
   const source = new Account(accountPubkey, "0");
   const tx = new TransactionBuilder(source, { fee: "0", networkPassphrase })
     .addOperation(op)
@@ -189,6 +195,29 @@ async function readSacBalance(
   if (!retval) return null;
   const native = scValToNative(retval);
   return typeof native === "bigint" ? native : BigInt(native);
+}
+
+function renderReport(report: BalanceReport, jsonOutput: boolean) {
+  if (jsonOutput) {
+    console.log(JSON.stringify(report, null, 2));
+    return;
+  }
+  console.log(`Account: ${report.account}`);
+  console.log(`Network: ${report.network}`);
+  console.log("");
+  for (const b of report.balances) {
+    const tag = b.source === "sac" ? "(SAC — Soroban)" : "(Classic)";
+    console.log(`  ${b.asset.padEnd(6)} ${b.amount.padStart(14)}    ${tag}`);
+  }
+  console.log("");
+  console.log(`Reserves: ${report.reserveXlm} XLM`);
+  console.log(`Spendable XLM: ${report.spendableXlm}`);
+}
+
+async function main() {
+  const cfg = readConfig();
+  const report = await runCheck(cfg);
+  renderReport(report, cfg.jsonOutput);
 }
 
 main().catch((err) => {

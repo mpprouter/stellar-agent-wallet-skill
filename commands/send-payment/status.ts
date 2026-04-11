@@ -1,7 +1,8 @@
 /**
  * send-payment/status — poll a Rozo payment ID until complete.
  *
- * Endpoint: GET https://intentapiv4.rozo.ai/functions/v1/payment-api/payments/{id}
+ * No env vars required. The Rozo API base URL is hardcoded in
+ * scripts/src/rozo-client.ts.
  *
  * Usage:
  *   npx tsx commands/send-payment/status.ts <payment-id>
@@ -9,6 +10,7 @@
  */
 
 import "dotenv/config";
+import { getPaymentStatus } from "../../scripts/src/rozo-client.js";
 
 const STATUS_MEANINGS: Record<string, string> = {
   payment_unpaid: "Created, awaiting funding",
@@ -28,23 +30,18 @@ const TERMINAL = new Set([
   "payment_refunded",
 ]);
 
-async function fetchStatus(id: string) {
-  const baseUrl =
-    process.env.ROZO_INTENT_URL ??
-    "https://intentapiv4.rozo.ai/functions/v1/payment-api";
-  const res = await fetch(`${baseUrl}/payments/${id}`);
-  if (!res.ok) throw new Error(`Status fetch failed: ${res.status} ${res.statusText}`);
-  return await res.json();
-}
-
 function render(data: any) {
   console.log(`Payment: ${data.id}`);
-  console.log(`  Status:   ${data.status} — ${STATUS_MEANINGS[data.status] ?? "unknown"}`);
+  console.log(
+    `  Status:   ${data.status} — ${STATUS_MEANINGS[data.status] ?? "unknown"}`,
+  );
   console.log(`  Type:     ${data.type}`);
   console.log(`  Created:  ${data.createdAt}`);
   console.log(`  Expires:  ${data.expiresAt}`);
   console.log("");
-  console.log(`  Source:      ${data.source?.tokenSymbol} on chain ${data.source?.chainId}`);
+  console.log(
+    `  Source:      ${data.source?.tokenSymbol} on chain ${data.source?.chainId}`,
+  );
   console.log(`    Amount:    ${data.source?.amount}`);
   console.log(`    Deposit:   ${data.source?.receiverAddress}`);
   if (data.source?.receiverMemo) {
@@ -54,7 +51,9 @@ function render(data: any) {
     console.log(`    Fee:       ${data.source?.fee}`);
   }
   console.log("");
-  console.log(`  Destination: ${data.destination?.tokenSymbol} on chain ${data.destination?.chainId}`);
+  console.log(
+    `  Destination: ${data.destination?.tokenSymbol} on chain ${data.destination?.chainId}`,
+  );
   console.log(`    To:        ${data.destination?.receiverAddress}`);
   console.log(`    Amount:    ${data.destination?.amount}`);
 }
@@ -68,14 +67,13 @@ async function main() {
   }
 
   if (!watch) {
-    const data = await fetchStatus(id);
+    const data = await getPaymentStatus(id);
     render(data);
     return;
   }
 
-  // Watch mode — poll every 5s until terminal
   while (true) {
-    const data = await fetchStatus(id);
+    const data = await getPaymentStatus(id);
     console.clear();
     render(data);
     console.log("");

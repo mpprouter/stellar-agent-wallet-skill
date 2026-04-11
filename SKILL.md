@@ -11,7 +11,7 @@ description: >
   api with stellar", or when the user shares a G... address with a payment intent.
 metadata:
   author: stellar-agent-wallet
-  version: 1.0.1
+  version: 1.0.2
   license: MIT
   runtime: node
 
@@ -53,10 +53,6 @@ metadata:
         description: Override Soroban RPC endpoint.
       STELLAR_ASSET_SAC:
         description: Stellar Asset Contract address for the payment token.
-      MPP_ROUTER_URL:
-        description: Override MPP Router catalog endpoint.
-      ROZO_INTENT_URL:
-        description: Override Rozo cross-chain intent API endpoint.
 
   # Commands that move funds. Each of these requires user confirmation
   # above the threshold below (readline prompt, unless --yes passed).
@@ -148,33 +144,26 @@ When triggered, read the user's intent and dispatch:
 
 ## First-time setup
 
-Scaffold into a project directory (not the skill's own directory):
+The skill is self-contained — there is no scaffold step that copies
+files into a user project. Clone or install the skill, install deps,
+set up `.env`, and run commands directly.
 
 ```bash
-# 1. Copy the client + adapters into the user's project
-#    (this is the only part the "skill" does mechanically —
-#    the rest lives as reusable sub-skill commands)
-mkdir -p <project>/src <project>/examples
-cp templates/client.ts.tmpl       <project>/src/stellar-client.ts
-cp templates/x402-adapter.ts.tmpl <project>/src/x402-adapter.ts
-cp templates/mpp-adapter.ts.tmpl  <project>/src/mpp-adapter.ts
-cp templates/env.example.tmpl     <project>/.env.example
-cp templates/pay-per-call.ts.tmpl <project>/examples/pay-per-call.ts
+# 1. Install deps (one-time)
+pnpm add @stellar/stellar-sdk dotenv tsx
 
-# 2. Install deps
-cd <project>
-pnpm add @stellar/stellar-sdk dotenv
-# For MPP envelope (optional — can also use pure client.ts):
-pnpm add @stellar/mpp mppx
-# For x402 envelope (optional — pay-per-call.ts uses pure fetch):
-pnpm add @x402/stellar @x402/core
-
-# 3. Generate a keypair
+# 2. Generate a keypair. This writes STELLAR_SECRET straight to .env
+#    with mode 600 — the secret is NEVER printed to the terminal.
 npx tsx scripts/generate-keypair.ts
 
-# 4. Fill .env.example → .env, choosing testnet or pubnet
-cp .env.example .env
-# edit STELLAR_NETWORK, STELLAR_SECRET, STELLAR_RPC_URL, etc.
+# 3. (testnet only) Fund your new account via Friendbot:
+#    curl "https://friendbot.stellar.org?addr=<the pubkey printed above>"
+
+# 4. Optional: review .env.example for overrides
+#    (STELLAR_NETWORK, STELLAR_HORIZON_URL, STELLAR_RPC_URL, STELLAR_ASSET_SAC)
+
+# 5. Try a read-only command:
+npx tsx commands/check-balance/run.ts
 ```
 
 ## Testnet → mainnet promotion
@@ -187,7 +176,7 @@ cp .env.example .env
 
 1. **Client only.** This skill does not scaffold servers. Servers live in `stellar-mpp-sdk/examples/`.
 2. **Sponsored mode only.** The only cross-compatible path for MPP + x402. See `references/sponsored-mode.md`.
-3. **One signer, multiple envelopes.** `src/stellar-client.ts` produces the inner XDR once; `x402-adapter.ts` and `mpp-adapter.ts` wrap it differently.
+3. **One signer, multiple envelopes.** `scripts/src/stellar-signer.ts` produces the inner XDR once; `scripts/src/x402.ts` and `scripts/src/mpp-envelope.ts` wrap it differently.
 4. **Rozo for cross-chain.** `send-payment` and `bridge` delegate to `intentapiv4.rozo.ai` so we don't reimplement bridging.
 5. **MPP Router for API discovery.** `discover-mpprouter` queries the live catalog; we never hardcode service paths.
 6. **Don't reinvent what exists.** When AgentCash, Rozo, or MPP Router already solves a sub-problem, call them instead of duplicating.
@@ -219,14 +208,17 @@ stellar-agent-wallet/
 │   ├── sponsored-mode.md
 │   ├── sdk-api-cheatsheet.md
 │   └── mainnet-checklist.md
-├── templates/                        ← copied into user's project
-│   ├── env.example.tmpl
-│   ├── client.ts.tmpl                ← the signer
-│   ├── x402-adapter.ts.tmpl          ← x402 envelope
-│   ├── mpp-adapter.ts.tmpl           ← mpp envelope
-│   └── pay-per-call.ts.tmpl          ← usage example
+├── .env.example                      ← copy to .env and fill in
 ├── scripts/
-│   └── generate-keypair.ts
+│   ├── generate-keypair.ts           ← writes new secret straight to .env
+│   └── src/                          ← shared library code (pure, no env reads)
+│       ├── secret.ts                 ← STELLAR_SECRET loader + redactor
+│       ├── stellar-signer.ts         ← sign SAC transfers
+│       ├── rozo-client.ts            ← Rozo intent API client
+│       ├── mpprouter-client.ts       ← MPP Router catalog client
+│       ├── pay-engine.ts             ← 402 parse + retry orchestrator
+│       ├── x402.ts                   ← x402 envelope encoder
+│       └── mpp-envelope.ts           ← MPP charge envelope encoder
 └── commands/                         ← sub-skills (run directly)
     ├── check-balance/
     │   ├── SKILL.md

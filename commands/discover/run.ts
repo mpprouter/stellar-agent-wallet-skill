@@ -7,43 +7,28 @@
  *   npx tsx commands/discover/run.ts --query "web search"
  *   npx tsx commands/discover/run.ts --query "scrape" --pick-one
  *   npx tsx commands/discover/run.ts --json
+ *
+ * No env vars required. The MPP Router base URL is hardcoded in
+ * scripts/src/mpprouter-client.ts.
  */
 
 import "dotenv/config";
+import {
+  fetchCatalog,
+  scoreService,
+  type ServiceRecord,
+} from "../../scripts/src/mpprouter-client.js";
 
-interface ServiceRecord {
-  id: string;
-  name: string;
-  category: string;
-  description: string;
-  public_path: string;
-  method: string;
-  price: string;
-  payment_method: string;
-  network: string;
-  asset: string;
-  status: string;
-  docs_url?: string;
-  methods?: Record<string, { intents: string[]; role?: string }>;
-  verified_mode?: string;
+interface CliOpts {
+  category?: string;
+  query?: string;
+  pickOne: boolean;
+  json: boolean;
 }
 
-interface Catalog {
-  version: string;
-  base_url: string;
-  generated_at: string;
-  services: ServiceRecord[];
-}
-
-function parseArgs() {
+function parseArgs(): CliOpts {
   const args = process.argv.slice(2);
-  const result: {
-    category?: string;
-    query?: string;
-    pickOne: boolean;
-    json: boolean;
-  } = { pickOne: false, json: false };
-
+  const result: CliOpts = { pickOne: false, json: false };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "--category") result.category = args[++i];
@@ -54,52 +39,33 @@ function parseArgs() {
   return result;
 }
 
-function score(service: ServiceRecord, query: string): number {
-  const q = query.toLowerCase();
-  let s = 0;
-  if (service.id.toLowerCase().includes(q)) s += 5;
-  if (service.name.toLowerCase().includes(q)) s += 3;
-  if (service.category.toLowerCase().includes(q)) s += 3;
-  if (service.description.toLowerCase().includes(q)) s += 1;
-  // Token overlap
-  const tokens = q.split(/\s+/).filter(Boolean);
-  const haystack = `${service.id} ${service.name} ${service.category} ${service.description}`.toLowerCase();
-  for (const t of tokens) {
-    if (haystack.includes(t)) s += 1;
-  }
-  return s;
-}
-
-async function main() {
-  const opts = parseArgs();
-  const baseUrl = process.env.MPP_ROUTER_URL ?? "https://apiserver.mpprouter.dev";
-
-  const res = await fetch(`${baseUrl}/v1/services/catalog`);
-  if (!res.ok) {
-    console.error(`Catalog fetch failed: ${res.status} ${res.statusText}`);
-    process.exit(1);
-  }
-  const catalog: Catalog = await res.json();
-
-  let services = catalog.services.filter((s) => s.status === "active");
-
+function applyFilters(
+  services: ServiceRecord[],
+  opts: CliOpts,
+): ServiceRecord[] {
+  let out = services.filter((s) => s.status === "active");
   if (opts.category) {
-    services = services.filter(
+    out = out.filter(
       (s) => s.category.toLowerCase() === opts.category!.toLowerCase(),
     );
   }
-
   if (opts.query) {
-    services = services
-      .map((s) => ({ s, score: score(s, opts.query!) }))
+    out = out
+      .map((s) => ({ s, score: scoreService(s, opts.query!) }))
       .filter((x) => x.score > 0)
       .sort((a, b) => b.score - a.score)
       .map((x) => x.s);
   }
-
   if (opts.pickOne) {
-    services = services.slice(0, 1);
+    out = out.slice(0, 1);
   }
+  return out;
+}
+
+async function main() {
+  const opts = parseArgs();
+  const catalog = await fetchCatalog();
+  const services = applyFilters(catalog.services, opts);
 
   if (opts.json) {
     if (opts.pickOne && services.length === 1) {
@@ -127,7 +93,6 @@ async function main() {
     console.log(`    ${s.description.slice(0, 100)}`);
     console.log("");
   }
-
   if (services.length === 0) {
     console.log("  (no matches — try without --query or --category)");
   }

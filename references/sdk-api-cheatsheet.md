@@ -43,9 +43,12 @@ const kp = Keypair.fromSecret(process.env.STELLAR_SECRET!);
 // Or: let @stellar/mpp normalize (accepts Keypair | string)
 const kp2 = resolveKeypair(process.env.STELLAR_SECRET!);
 
-// Generate new
+// Generate new — DO NOT print the secret to stdout.
+// Use scripts/generate-keypair.ts which writes to .env directly.
 const newKp = Keypair.random();
-console.log(newKp.publicKey(), newKp.secret());
+console.log("Generated pubkey:", newKp.publicKey());
+// newKp.secret() should be written straight to a .env file with mode 600,
+// never printed or sent to any network/telemetry destination.
 ```
 
 ## RPC client
