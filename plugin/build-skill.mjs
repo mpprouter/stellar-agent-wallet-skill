@@ -22,6 +22,7 @@ import {
   writeRendered,
   stampVersionInFile,
   substitutionsFrom,
+  installDeps,
   log,
 } from "./build-lib.mjs";
 
@@ -61,5 +62,10 @@ writeRendered(
 //    currently it reads version from frontmatter so this is a no-op,
 //    but we keep the hook for future use).
 stampVersionInFile(join(outDir, "SKILL.md"), versionInfo.version);
+
+// 8. Install production dependencies so the skill ships with node_modules.
+//    Without this, agents must run `npm install` after plugin installation,
+//    which fails when only pnpm-lock.yaml exists (npm ignores it).
+installDeps(outDir, "skill");
 
 log("skill", "Done.");

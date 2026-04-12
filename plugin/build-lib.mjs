@@ -16,6 +16,7 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { execSync } from "node:child_process";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -95,4 +96,15 @@ export function substitutionsFrom(versionInfo) {
 
 export function log(label, msg) {
   console.log(`[${label}] ${msg}`);
+}
+
+/** Run npm install --production in a build output directory.
+ *  Generates package-lock.json for deterministic installs and populates
+ *  node_modules so the artifact is ready to run immediately. */
+export function installDeps(dir, label = "build") {
+  log(label, `Installing production dependencies in ${dir}`);
+  execSync("npm install --omit=dev", {
+    cwd: dir,
+    stdio: "inherit",
+  });
 }

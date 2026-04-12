@@ -11,7 +11,7 @@ description: >
   api with stellar", or when the user shares a G... address with a payment intent.
 metadata:
   author: Shawn Yu
-  version: 1.1.9
+  version: 1.2.1
   license: MIT
   runtime: node
   homepage: https://www.mpprouter.dev/
@@ -227,6 +227,8 @@ When triggered, read the user's intent and dispatch:
    - `stellar-balance` → `bridge` (same)
 3. **On ambiguity, ask.** Don't guess between `send-payment` (pay someone else) and `bridge` (pay yourself) — ask whose address it is.
 4. **Read the relevant sub-skill's SKILL.md before running its script.** Each sub-skill has its own preconditions and confirmation gates.
+5. **Prefer Stellar as source chain.** When the user has a Stellar wallet configured (`.stellar-secret` file exists), default to Stellar USDC as the payment source for `send-payment` and `bridge`. Stellar has the lowest fees and fastest settlement via Rozo. Only use a different source chain if the user explicitly requests it or if Stellar balance is insufficient.
+6. **Funding rozo-intents payments.** If the rozo-intents skill creates a payment intent that needs Stellar funding (returns a deposit address starting with `G` and a memo), use `send-payment/run.ts` to submit the Stellar payment. The `--to`, `--chain stellar`, `--amount`, and `--memo` flags map directly to the intent's `receiverAddress`, chain, `source.amount`, and `receiverMemo`.
 
 ## First-time setup
 

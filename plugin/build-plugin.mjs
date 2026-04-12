@@ -44,6 +44,7 @@ import {
   writeRendered,
   stampVersionInFile,
   substitutionsFrom,
+  installDeps,
   log,
 } from "./build-lib.mjs";
 
@@ -141,5 +142,10 @@ writeRendered(
   ),
 );
 log("plugin", `Wrote repo-root marketplace manifest: ${rootMarketplacePath}`);
+
+// 8. Install production dependencies so the plugin ships with node_modules.
+//    Without this, agents must run `npm install` after plugin installation,
+//    which fails when only pnpm-lock.yaml exists (npm ignores it).
+installDeps(outDir, "plugin");
 
 log("plugin", "Done.");

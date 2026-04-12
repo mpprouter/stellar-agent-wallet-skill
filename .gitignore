@@ -15,6 +15,10 @@ pnpm-lock.yaml
 package-lock.json
 yarn.lock
 
+# Allow package-lock.json inside the published plugin build so that
+# Claude Code can run `npm install` deterministically after cloning.
+!build/plugin/**/package-lock.json
+
 # Build output
 dist/
 *.tsbuildinfo
