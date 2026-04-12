@@ -6,6 +6,8 @@
 *.stellar-secret
 stellar.key
 *.key
+docs
+
 
 # Dependencies (this is a skill package — no deps expected, but guard anyway)
 node_modules/

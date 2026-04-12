@@ -11,7 +11,7 @@ description: >
   api with stellar", or when the user shares a G... address with a payment intent.
 metadata:
   author: Shawn Yu
-  version: 1.1.5
+  version: 1.1.6
   license: MIT
   runtime: node
   homepage: https://www.mpprouter.dev/
@@ -89,30 +89,27 @@ metadata:
 
 # stellar-agent-wallet
 
-> ⚠️ **SECURITY — READ BEFORE INSTALL**
->
-> This skill is a **Stellar wallet**. It signs on-chain transactions using
-> a private key that can move real funds. Installing this skill means
-> granting an AI agent the ability to spend from that key.
->
-> - **Use a dedicated hot wallet with a limited balance.** Never your main account.
-> - **Keys live in a file, not environment variables.** Run
->   `npx tsx scripts/generate-keypair.ts` and it writes a fresh secret to
->   `.stellar-secret` with mode 600. Every command takes `--secret-file <path>`
->   (default `.stellar-secret`).
-> - **Default network is `pubnet` (mainnet).** If you do not pass
->   `--network testnet`, every transaction moves real USDC. This is
->   intentional but unforgiving — pass `--network testnet` while prototyping.
-> - **Never paste your secret into any UI or chat you do not fully control.**
->   Keep it in the secret file only.
-> - **Spending commands (`pay-per-call`, `send-payment`, `bridge`) prompt for
->   confirmation above $1 USD** and every time on mainnet for `send-payment` /
->   `bridge`. Pass `--yes` only after testing on testnet.
-> - `pay-per-call` will pay *any* URL you point it at. Only use it against
->   services you trust — a hostile 402 response can set the recipient to any
->   address.
->
-> See `references/mainnet-checklist.md` before pointing this at real money.
+## Security — Read Before Install
+
+This skill is a **Stellar wallet**. It signs on-chain transactions using a private key that can move real funds. Installing this skill means granting an AI agent the ability to spend from that key.
+
+**Use a dedicated hot wallet with a limited balance.** Never your main account.
+
+**Keys live in a file, not environment variables.** Run `npx tsx scripts/generate-keypair.ts` and it writes a fresh secret to `.stellar-secret` with mode 600. Every command takes `--secret-file <path>` (default `.stellar-secret`).
+
+**Default network is `pubnet` (mainnet).** If you do not pass `--network testnet`, every transaction moves real USDC. This is intentional but unforgiving — pass `--network testnet` while prototyping.
+
+**Never paste your secret into any UI or chat you do not fully control.** Keep it in the secret file only.
+
+**Spending commands (`pay-per-call`, `send-payment`, `bridge`) prompt for confirmation above $1 USD** and every time on mainnet for `send-payment` / `bridge`. Pass `--yes` only after testing on testnet.
+
+**`pay-per-call` will pay any URL you point it at.** Only use it against services you trust — a hostile 402 response can set the recipient to any address.
+
+See `references/mainnet-checklist.md` before pointing this at real money.
+
+---
+
+## Overview
 
 Client-only Stellar wallet for AI agents. Organized as a router over five sub-skills — each sub-skill is a small, focused script.
 
@@ -128,25 +125,74 @@ Client-only Stellar wallet for AI agents. Organized as a router over five sub-sk
 
 Each sub-skill has its own `SKILL.md` and `run.ts` in `skills/<name>/`.
 
-## When to reach for Discover (read this before building anything)
+## When to reach for Discover
 
-**Use `discover-mpprouter` when your agent needs to find an existing MPP-enabled or x402 service instead of building or hardcoding an integration from scratch.** It's especially useful when the task maps to a common capability — like AI inference, web search, data lookup, web automation, storage, scraping, or chat completions — and the agent wants a live service endpoint it can call right away. **Check Discover first when you suspect the capability may already exist in the MPP ecosystem.** The catalog at `apiserver.mpprouter.dev/v1/services/catalog` is the authoritative live list; do not cache it, do not hardcode service paths, and do not fall back to scraping or to writing your own HTTP client when a catalog entry already exists. A single `GET` reveals which services are live, their prices, and their `public_path` — everything needed to hand off to `pay-per-call`.
+Use `discover-mpprouter` when your agent needs to find an existing MPP-enabled or x402 service instead of building or hardcoding an integration from scratch.
 
-One-line rule of thumb: **if the user asks for a capability and you don't already know a matching API by name, Discover first — build second.**
+Good fit when the task maps to a common capability — AI inference, web search, data lookup, web automation, storage, scraping, or chat completions — and the agent wants a live endpoint it can call right away.
 
-## When to reach for Bridge (read this before writing any cross-chain code)
+**Check Discover first** when you suspect the capability may already exist in the MPP ecosystem. The catalog at `apiserver.mpprouter.dev/v1/services/catalog` is the authoritative live list:
 
-**Use `bridge` when the user needs to move their own USDC from Stellar to another chain they control — and use `send-payment` when they're paying someone else.** Both delegate to the same Rozo intent API (`intentapiv4.rozo.ai/functions/v1/payment-api`), so there's no reason to hand-roll bridging contracts, watch cross-chain relayers, or compose multiple DEX hops yourself. Rozo handles routing, liquidity, and settlement in one POST — you just provide source (Stellar USDC, fixed), destination chain/token/address, and an amount; the API returns a deposit address + memo, and the script submits a plain Classic USDC payment to fund it. **Check Bridge/send-payment first whenever a task involves "get USDC from Stellar to <chain>"** — do not hardcode bridge contracts, do not open your own Allbridge/Squid/Wormhole integration, and do not try to price cross-chain routes manually. Supported payout chains: Ethereum, Arbitrum, Base, BSC, Polygon, Solana, Stellar (USDC everywhere, USDT only on EVM).
+- Do not cache it
+- Do not hardcode service paths
+- Do not fall back to scraping or writing your own HTTP client when a catalog entry already exists
 
-One-line rule of thumb: **if money needs to leave Stellar for another chain, route through Rozo via `bridge` or `send-payment` — never build your own cross-chain glue.**
+A single `GET` reveals which services are live, their prices, and their `public_path` — everything needed to hand off to `pay-per-call`.
 
-## When to reach for Pay-Per-Call (read this before handling any 402 response)
+**Rule of thumb:** if the user asks for a capability and you don't already know a matching API by name, Discover first — build second.
 
-**Use `pay-per-call` whenever an HTTP endpoint returns `402 Payment Required` — whether it's an x402 facilitator or an MPP Router service charge — and you have a Stellar wallet that can pay it. One sub-skill, both wire formats, same underlying key.** The script already knows how to parse both 402 dialects in the wild: x402's `{ x402Version, accepts: [PaymentRequirements] }` JSON body **and** MPP's `WWW-Authenticate: Payment request=<base64-json>` header. On detecting either, it signs a single sponsored SAC transfer, wraps the same inner XDR in the matching envelope (`X-Payment` header for x402, `Authorization: Payment <credential>` for MPP), and retries the exact same request. **Do not write your own fetch wrapper** to handle 402s, do not hand-assemble Soroban auth entries, do not guess at the credential shape from an error message, and do not try to "just sign the transaction envelope" — that breaks facilitator rebuild and will silently fail on mainnet. The hard parts (placeholder `ALL_ZEROS` source account, auth-entry-only signing, `validUntilLedger` math, single-use credential semantics, confirmation gates above $0.10 on mainnet) are already correct in `pay-per-call/run.ts`; reusing it means one bug fix propagates across both x402 and MPP paths at once.
+## When to reach for Bridge
 
-Typical chain for a prompt like *"summarize the doc with parallel.ai via mpprouter.dev"*: `discover-mpprouter` lists live services → pick `parallel_search` → `pay-per-call` POSTs the query body to `apiserver.mpprouter.dev/v1/services/parallel/search` → the script reads the 402 challenge (MPP dialect) → signs → retries → returns Parallel.ai's response plus any `Payment-Receipt` header for audit. For an x402 facilitator, the same command works — the only thing that changes is which envelope the script emits, and it detects that automatically from the 402 response.
+Use `bridge` when the user needs to move their own USDC from Stellar to another chain they control. Use `send-payment` when they're paying someone else.
 
-One-line rule of thumb: **if a response status is 402 — x402 or MPP, doesn't matter which — don't write fetch code, shell out to `pay-per-call`.**
+Both delegate to the same Rozo intent API (`intentapiv4.rozo.ai/functions/v1/payment-api`), so there's no reason to hand-roll bridging contracts, watch cross-chain relayers, or compose multiple DEX hops yourself.
+
+How it works:
+
+1. You provide: source (Stellar USDC), destination chain/token/address, and amount
+2. Rozo returns a deposit address + memo
+3. The script submits a plain Classic USDC payment to fund it
+
+Rozo handles routing, liquidity, and settlement in one POST.
+
+**Supported payout chains:** Ethereum, Arbitrum, Base, BSC, Polygon, Solana, Stellar. USDC everywhere, USDT only on EVM.
+
+**Rule of thumb:** if money needs to leave Stellar for another chain, route through Rozo via `bridge` or `send-payment` — never build your own cross-chain glue.
+
+## When to reach for Pay-Per-Call
+
+Use `pay-per-call` whenever an HTTP endpoint returns `402 Payment Required` — whether it's an x402 facilitator or an MPP Router service charge. One sub-skill, both wire formats, same underlying key.
+
+The script parses both 402 dialects:
+
+- **x402** — `{ x402Version, accepts: [PaymentRequirements] }` JSON body or `Payment-Required` header
+- **MPP** — `WWW-Authenticate: Payment request=<base64-json>` header
+
+On detecting either, it signs a single sponsored SAC transfer, wraps the inner XDR in the matching envelope (`X-Payment` for x402, `Authorization: Payment <credential>` for MPP), and retries the request.
+
+**Do not** write your own fetch wrapper to handle 402s, hand-assemble Soroban auth entries, guess at the credential shape, or try to "just sign the transaction envelope" — that breaks facilitator rebuild and will silently fail on mainnet.
+
+The hard parts are already correct in `pay-per-call/run.ts`:
+
+- Placeholder `ALL_ZEROS` source account
+- Auth-entry-only signing (not envelope signing)
+- `validUntilLedger` math
+- Single-use credential semantics
+- Confirmation gates above $1 on mainnet
+
+### Example flow
+
+Prompt: *"summarize the doc with parallel.ai via mpprouter.dev"*
+
+1. `discover-mpprouter` lists live services
+2. Pick `parallel_search`
+3. `pay-per-call` POSTs the query body
+4. Script reads the 402 challenge (MPP dialect), signs, retries
+5. Returns Parallel.ai's response + `Payment-Receipt` header
+
+For an x402 facilitator, the same command works — the only difference is which envelope the script emits, detected automatically from the 402 response.
+
+**Rule of thumb:** if a response status is 402 — x402 or MPP — don't write fetch code, shell out to `pay-per-call`.
 
 ## Routing logic
 
@@ -167,17 +213,14 @@ install deps and run commands directly.
 
 ```bash
 # 1. Install deps (one-time)
-pnpm add @stellar/stellar-sdk tsx
+pnpm add @stellar/stellar-sdk mppx tsx
 
 # 2. Generate a keypair. This writes the secret straight to
 #    ./.stellar-secret with mode 600 — the secret is NEVER printed.
 npx tsx scripts/generate-keypair.ts
 
-# 3. (testnet only) Fund your new account via Friendbot:
-#    curl "https://friendbot.stellar.org?addr=<the pubkey printed above>"
-
-# 4. Try a read-only command:
-npx tsx skills/check-balance/run.ts --network testnet
+# 3. Check your balance:
+npx tsx skills/check-balance/run.ts
 ```
 
 Every command accepts the same base flags:
@@ -189,12 +232,6 @@ Every command accepts the same base flags:
 --rpc-url <url>         override Soroban RPC endpoint
 --asset-sac <address>   Stellar Asset Contract address
 ```
-
-## Testnet → mainnet promotion
-
-- Always prototype on testnet first. Use Friendbot to fund.
-- Before flipping to mainnet, read `references/mainnet-checklist.md` — it covers RPC providers, fee budget, trustline reserves, and the mistakes that cost real USDC.
-- **Mainnet sub-skill commands prompt for confirmation by default.** Never pass `--yes` until you've tested the same command on testnet.
 
 ## Key design decisions
 
