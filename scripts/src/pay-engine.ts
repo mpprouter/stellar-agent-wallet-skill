@@ -39,23 +39,26 @@ export interface ParsedChallenge {
  * See skills/pay-per-call/SKILL.md for the rationale.
  */
 export async function parse402(res: Response): Promise<ParsedChallenge | null> {
-  // 1. MPP dialect — WWW-Authenticate header.
+  // 1. MPP dialect — WWW-Authenticate: Payment <auth-params>.
+  //
+  // The server emits a full RFC 7235 challenge with id, realm, method,
+  // intent, request, expires, opaque params. We parse all of them so
+  // `encodeMppHeader` can echo the challenge back intact (the HMAC
+  // binding on `id` requires the full challenge round-trip).
   const wwwAuth = res.headers.get("www-authenticate");
-  if (wwwAuth && wwwAuth.toLowerCase().startsWith("payment")) {
-    // RFC 7235 auth-param values may be quoted or unquoted.
-    // MPP Router emits `Payment request="<base64>"`; older/simpler
-    // servers emit `Payment request=<base64>`. Accept both.
-    const match = wwwAuth.match(/request="?([A-Za-z0-9+/=_-]+)"?/);
-    if (match) {
-      const decoded = Buffer.from(match[1], "base64url").toString("utf8");
-      const challenge = JSON.parse(decoded);
+  if (wwwAuth) {
+    const mppChallenge = parseMppChallengeFromWwwAuthenticate(wwwAuth);
+    if (mppChallenge) {
       return {
         dialect: "mpp",
-        amount: challenge.amount,
-        asset: challenge.currency,
-        payTo: challenge.recipient,
-        maxTimeoutSeconds: challenge.methodDetails?.maxTimeoutSeconds ?? 60,
-        raw: challenge,
+        amount: mppChallenge.request.amount,
+        asset: mppChallenge.request.currency,
+        payTo: mppChallenge.request.recipient,
+        maxTimeoutSeconds:
+          (mppChallenge.request.methodDetails?.maxTimeoutSeconds as
+            | number
+            | undefined) ?? 60,
+        raw: mppChallenge,
       };
     }
   }
@@ -108,6 +111,171 @@ export async function parse402(res: Response): Promise<ParsedChallenge | null> {
   }
 
   return null;
+}
+
+/**
+ * Parse a `WWW-Authenticate: Payment <auth-params>` header into a
+ * structured MPP challenge.
+ *
+ * Handles the RFC 7235 `Payment` scheme with auth-params:
+ *   id="...", realm="...", method="stellar", intent="charge",
+ *   request="<base64url-json>", expires="...", opaque="<base64url-json>"
+ *
+ * Both `request` and `opaque` are nested base64url-encoded JSON objects
+ * and are decoded into structured values so the credential can echo
+ * them back to satisfy the HMAC binding on `challenge.id`.
+ *
+ * Returns `null` if the header is not a Payment challenge or is missing
+ * the required `request` param.
+ */
+function parseMppChallengeFromWwwAuthenticate(
+  header: string,
+): MppChallenge | null {
+  // The header may contain multiple comma-separated schemes (RFC 9110).
+  // Find the first `Payment <...>` span.
+  const paymentSection = extractPaymentScheme(header);
+  if (!paymentSection) return null;
+
+  const params = parseAuthParams(paymentSection);
+  const rawRequest = params["request"];
+  if (!rawRequest) return null;
+
+  let request: MppChallenge["request"];
+  try {
+    request = JSON.parse(
+      Buffer.from(rawRequest, "base64url").toString("utf8"),
+    ) as MppChallenge["request"];
+  } catch {
+    return null;
+  }
+
+  let opaque: Record<string, string> | undefined;
+  if (params["opaque"]) {
+    try {
+      opaque = JSON.parse(
+        Buffer.from(params["opaque"], "base64url").toString("utf8"),
+      ) as Record<string, string>;
+    } catch {
+      // Tolerate malformed opaque — it's optional.
+    }
+  }
+
+  const id = params["id"];
+  const realm = params["realm"];
+  const method = params["method"];
+  const intent = params["intent"];
+  if (!id || !realm || !method || !intent) return null;
+
+  return {
+    id,
+    realm,
+    method,
+    intent,
+    request,
+    ...(params["expires"] && { expires: params["expires"] }),
+    ...(params["description"] && { description: params["description"] }),
+    ...(params["digest"] && { digest: params["digest"] }),
+    ...(opaque && { opaque }),
+  };
+}
+
+/**
+ * Extract the `Payment` scheme from a WWW-Authenticate value that may
+ * contain multiple schemes (comma-separated per RFC 9110). Returns
+ * the auth-params portion (everything after `Payment `), or null if
+ * no Payment scheme is present.
+ */
+function extractPaymentScheme(header: string): string | null {
+  // Walk the header respecting quoted-strings so commas inside values
+  // don't split schemes.
+  const token = "Payment";
+  let inQuotes = false;
+  let escaped = false;
+
+  for (let i = 0; i < header.length; i++) {
+    const char = header[i]!;
+    if (inQuotes) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inQuotes = false;
+      continue;
+    }
+    if (char === '"') {
+      inQuotes = true;
+      continue;
+    }
+    // Match `Payment ` at a scheme boundary (start of string or after comma).
+    if (
+      header.slice(i, i + token.length).toLowerCase() === token.toLowerCase() &&
+      /\s/.test(header[i + token.length] ?? "")
+    ) {
+      const prefix = header.slice(0, i).trimEnd();
+      if (prefix === "" || prefix.endsWith(",")) {
+        let start = i + token.length;
+        while (start < header.length && /\s/.test(header[start] ?? "")) start++;
+        return header.slice(start);
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Parse auth-params from a scheme body (the part after `Payment `).
+ * Supports both quoted-string and token values per RFC 7235.
+ */
+function parseAuthParams(input: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  let i = 0;
+
+  while (i < input.length) {
+    // Skip whitespace and commas between params.
+    while (i < input.length && /[\s,]/.test(input[i] ?? "")) i++;
+    if (i >= input.length) break;
+
+    // Read key (token chars).
+    const keyStart = i;
+    while (i < input.length && /[A-Za-z0-9_-]/.test(input[i] ?? "")) i++;
+    const key = input.slice(keyStart, i);
+    if (!key) break;
+
+    while (i < input.length && /\s/.test(input[i] ?? "")) i++;
+    if (input[i] !== "=") break;
+    i++;
+    while (i < input.length && /\s/.test(input[i] ?? "")) i++;
+
+    // Read value — quoted or token.
+    let value: string;
+    if (input[i] === '"') {
+      i++;
+      let v = "";
+      let escaped = false;
+      while (i < input.length) {
+        const ch = input[i]!;
+        i++;
+        if (escaped) {
+          v += ch;
+          escaped = false;
+          continue;
+        }
+        if (ch === "\\") {
+          escaped = true;
+          continue;
+        }
+        if (ch === '"') break;
+        v += ch;
+      }
+      value = v;
+    } else {
+      const vStart = i;
+      while (i < input.length && input[i] !== ",") i++;
+      value = input.slice(vStart, i).trim();
+    }
+
+    result[key] = value;
+  }
+
+  return result;
 }
 
 /**

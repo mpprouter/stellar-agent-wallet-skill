@@ -6,10 +6,15 @@
     "build:skill": "node plugin/build-skill.mjs",
     "build:plugin": "node plugin/build-plugin.mjs",
     "build:all": "npm run build:skill && npm run build:plugin",
-    "test:sign": "tsx scripts/smoke-test-sign.ts"
+    "test:sign": "tsx scripts/smoke-test-sign.ts",
+    "test:envelope": "tsx scripts/smoke-test-mpp-envelope.ts",
+    "test": "npm run test:envelope && npm run test:sign"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^15.0.1",
     "tsx": "^4.21.0"
+  },
+  "devDependencies": {
+    "mppx": "0.4.11"
   }
 }
