@@ -125,6 +125,12 @@ async function main() {
     console.log(`    ${s.name} — ${s.price}`);
     console.log(`    ${s.method} ${catalog.base_url}${s.public_path}`);
     console.log(`    ${s.description.slice(0, 100)}`);
+    const docs = (s as any).docs as { homepage?: string; llms_txt?: string; api_reference?: string } | undefined;
+    if (docs) {
+      if (docs.llms_txt) console.log(`    📖 LLM docs: ${docs.llms_txt}`);
+      if (docs.api_reference) console.log(`    📋 API ref:  ${docs.api_reference}`);
+      if (docs.homepage && !docs.llms_txt) console.log(`    🏠 Docs:     ${docs.homepage}`);
+    }
     console.log("");
   }
   if (services.length === 0) {

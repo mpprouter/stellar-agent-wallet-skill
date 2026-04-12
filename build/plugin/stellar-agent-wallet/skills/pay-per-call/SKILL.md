@@ -20,6 +20,19 @@ The "execute" step of the wallet agent. Call a paid HTTP endpoint, handle the 40
 - Cross-chain payments — use `send-payment` or `bridge`
 - Pure SDK-level signing without HTTP — use the `client.ts` template directly
 
+## Prerequisites
+
+Before calling a service, you need to know its request body format.
+The MPP Router **forwards request bodies as-is** — it does not
+transform or validate them.
+
+- **If you already know the schema** (e.g. from the user's prompt or
+  prior context) → proceed directly.
+- **If you don't** → run `discover` first. The service's `docs` field
+  points to upstream API documentation. Read `docs.llms_txt` (preferred)
+  or `docs.api_reference` to learn the correct request shape before
+  paying. Sending a malformed body wastes the payment.
+
 ## Flow
 
 1. First attempt: plain POST/GET to the URL.
