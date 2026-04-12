@@ -104,7 +104,7 @@ export async function signSacTransfer(
     .setTimeout(req.maxTimeoutSeconds)
     .build();
 
-  const sim = await server.simulateTransaction(builtTx);
+  const sim = await simulateWithRetry(server, builtTx);
   if (rpc.Api.isSimulationError(sim)) {
     throw new Error(`Simulation failed: ${sim.error}`);
   }
@@ -151,4 +151,31 @@ export async function signSacTransfer(
     signerPubkey,
     validUntilLedger,
   };
+}
+
+/**
+ * Retry `simulateTransaction` once on transient network errors
+ * (ECONNRESET, ETIMEDOUT, socket hang up). Soroban RPC endpoints
+ * occasionally drop connections under load; a single retry with a
+ * short backoff resolves it in practice.
+ *
+ * Simulation is read-only and idempotent, so retrying is always safe.
+ */
+async function simulateWithRetry(
+  server: rpc.Server,
+  tx: ReturnType<TransactionBuilder["build"]>,
+  maxRetries = 1,
+  backoffMs = 2000,
+): Promise<rpc.Api.SimulateTransactionResponse> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await server.simulateTransaction(tx);
+    } catch (err: any) {
+      const msg = String(err?.message ?? err ?? "");
+      const transient =
+        /ECONNRESET|ETIMEDOUT|socket hang up|fetch failed/i.test(msg);
+      if (!transient || attempt >= maxRetries) throw err;
+      await new Promise((r) => setTimeout(r, backoffMs));
+    }
+  }
 }

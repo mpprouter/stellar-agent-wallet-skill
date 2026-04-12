@@ -26,9 +26,14 @@ High-level discovery for the MPP Router service catalog. Lets agents find and ca
 
 1. **Discover** — `GET https://apiserver.mpprouter.dev/v1/services/catalog` returns the live service list.
 2. **Match** — pick the service whose `id` or `category` best fits the user's intent. Ask the user if ambiguous.
-3. **Invoke** — `POST {base_url}{public_path}` with the request body. Expect `402 Payment Required` with a Stellar challenge in `WWW-Authenticate: Payment request=...`.
-4. **Pay** — hand off to `pay-per-call` with the 402 challenge; it produces a signed credential.
-5. **Retry** — re-POST the same body with `Authorization: Payment <credential>`. Receive the upstream response + `Payment-Receipt` header.
+3. **Read docs** — check the matched service's `docs` field:
+   - If `docs.llms_txt` exists → fetch it and read the API schema to build the correct request body. **The router forwards bodies as-is — it does not transform or validate them.**
+   - If only `docs.api_reference` → read that instead.
+   - If only `docs.homepage` → browse it for the API format.
+   - If no docs at all → ask the user for the request body format, or try a minimal probe.
+4. **Invoke** — `POST {base_url}{public_path}` with the correct request body. Expect `402 Payment Required` with a Stellar challenge in `WWW-Authenticate: Payment request=...`.
+5. **Pay** — hand off to `pay-per-call` with the 402 challenge; it produces a signed credential.
+6. **Retry** — re-POST the same body with `Authorization: Payment <credential>`. Receive the upstream response + `Payment-Receipt` header.
 
 ## Service catalog
 
@@ -46,13 +51,12 @@ skill reads it and tags each record with a `payment_mode` string:
   `exa_search`, `firecrawl_scrape`, `parallel_search`, `alchemy_rpc`,
   `storage_upload`.
 - **`session`** (`⚠ session-only`) — upstream merchant is session-mode
-  only. MPP Router still advertises `stellar.intents: ["charge","channel"]`
-  for these and emits `intent="charge"` challenges, so the client signs
-  and pays **but the upstream rejects the payment receipt** and returns
-  a 404. **This is "pay-but-404" — real USDC is spent with no response
-  returned.** The router team has been notified; fix pending. Affected:
+  only. The router now correctly advertises `stellar.intents: ["channel"]`
+  (no `charge`) for these services. To use them, the agent must have a
+  registered Stellar channel contract — see the `stellar-agent-wallet`
+  root SKILL.md "Out of scope" section. Affected:
   `gemini_generate`, `openai_chat`, `openrouter_chat`, `tempo_rpc`.
-  Do NOT route charges to these until `verified_mode` flips to `charge`.
+  Charge-mode clients cannot call these services.
 - **`unverified`** (`· unverified`) — the router hasn't labeled
   `verified_mode` (or labeled it as the literal string `"false"`, which
   is a router-side catalog-generator bug). ~97% of the catalog is in
@@ -90,22 +94,47 @@ raw `verified_mode` string (which can be missing or literally
 
 ```json
 {
-  "id": "parallel_search",
-  "name": "Parallel Search",
+  "id": "exa_search",
+  "name": "Exa – Search the web",
   "category": "search",
-  "description": "...",
-  "public_path": "/v1/services/parallel/search",
+  "description": "Search the web",
+  "public_path": "/v1/services/exa/search",
   "method": "POST",
-  "price": "$0.01/request",
+  "price": "$0.005/request",
   "payment_method": "stellar",
   "network": "stellar-mainnet",
   "asset": "USDC",
   "status": "active",
   "methods": { "stellar": { "intents": ["charge", "channel"] } },
+  "docs": {
+    "homepage": "https://docs.exa.ai",
+    "llms_txt": "https://docs.exa.ai/llms.txt"
+  },
   "verified_mode": "charge",
   "payment_mode": "charge"
 }
 ```
+
+### `docs` field — upstream API documentation
+
+The router forwards request bodies as-is without transformation. Clients
+must know each upstream API's request format. The `docs` field provides
+the upstream's own documentation:
+
+| Sub-field | What it is | How the agent should use it |
+|---|---|---|
+| `llms_txt` | LLM-readable docs (69/88 providers) | **Read this first.** Fetch it and parse the API schema to construct the correct request body. |
+| `api_reference` | Full API reference (8/88 providers) | Detailed endpoint docs — use when `llms_txt` is missing or insufficient. |
+| `homepage` | Docs homepage (82/88 providers) | Fallback — browse or scrape if neither of the above is available. |
+
+**Decision rule**: if `docs.llms_txt` exists, fetch and read it before
+calling the service. If not, check `docs.api_reference`. If neither
+exists, warn the user that you may need them to supply the request body
+format, or try `docs.homepage`.
+
+19 providers have no `llms_txt` — these include Google Gemini, Google
+Maps, Nansen, Parallel, Allium, AgentMail, and several Tempo-proxied
+third-party APIs.
 
 ## How to run
 
