@@ -17,6 +17,29 @@ import {
   type ServiceRecord,
 } from "../../scripts/src/mpprouter-client.js";
 
+/**
+ * Label for `verified_mode`, used in both text and JSON output so users
+ * can see whether a service has been verified to work end-to-end on
+ * Stellar charge flow.
+ *
+ * - "charge" → green, known-working with this skill
+ * - "session" → yellow, upstream is session-only; Stellar charge-mode
+ *   client will pay but upstream rejects the receipt (pay-but-404).
+ *   See references/session-mode-status.md for the list of affected
+ *   services and tracking status.
+ * - anything else (including unset / literal "false") → grey, untested
+ *   but not known-broken. Majority of the 489-service catalog lives
+ *   here today; most work but we can't prove it without a paid probe.
+ */
+function modeLabel(
+  mode: string | undefined,
+): { tag: string; human: string } {
+  if (mode === "charge") return { tag: "charge", human: "✓ verified charge" };
+  if (mode === "session")
+    return { tag: "session", human: "⚠ session-only (charge flow fails after payment — awaiting router fix)" };
+  return { tag: "unverified", human: "· unverified (not labeled by router; usually works)" };
+}
+
 interface CliOpts {
   category?: string;
   query?: string;
@@ -65,13 +88,25 @@ async function main() {
   const catalog = await fetchCatalog();
   const services = applyFilters(catalog.services, opts);
 
+  // Enrich each record with a `payment_mode` tag so JSON consumers can
+  // branch on it without re-deriving from `verified_mode` (which is the
+  // router's raw string and may include spurious values like "false").
+  const enriched = services.map((s) => {
+    const { tag } = modeLabel(s.verified_mode);
+    return { ...s, payment_mode: tag };
+  });
+
   if (opts.json) {
-    if (opts.pickOne && services.length === 1) {
-      console.log(JSON.stringify(services[0], null, 2));
+    if (opts.pickOne && enriched.length === 1) {
+      console.log(JSON.stringify(enriched[0], null, 2));
     } else {
       console.log(
         JSON.stringify(
-          { base_url: catalog.base_url, services, version: catalog.version },
+          {
+            base_url: catalog.base_url,
+            services: enriched,
+            version: catalog.version,
+          },
           null,
           2,
         ),
@@ -85,7 +120,8 @@ async function main() {
   console.log(`Services: ${services.length}`);
   console.log("");
   for (const s of services) {
-    console.log(`  ${s.id}  [${s.category}]`);
+    const { human } = modeLabel(s.verified_mode);
+    console.log(`  ${s.id}  [${s.category}]  ${human}`);
     console.log(`    ${s.name} — ${s.price}`);
     console.log(`    ${s.method} ${catalog.base_url}${s.public_path}`);
     console.log(`    ${s.description.slice(0, 100)}`);

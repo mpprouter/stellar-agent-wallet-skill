@@ -30,18 +30,63 @@ High-level discovery for the MPP Router service catalog. Lets agents find and ca
 4. **Pay** — hand off to `pay-per-call` with the 402 challenge; it produces a signed credential.
 5. **Retry** — re-POST the same body with `Authorization: Payment <credential>`. Receive the upstream response + `Payment-Receipt` header.
 
-## Service catalog (live, verified)
+## Service catalog
 
-| id | path | price | upstream |
-|---|---|---|---|
-| `parallel_search` | `POST /v1/services/parallel/search` | $0.01/req | Parallel.ai web search |
-| `exa_search` | `POST /v1/services/exa/search` | $0.005/req | Exa neural search |
-| `firecrawl_scrape` | `POST /v1/services/firecrawl/scrape` | $0.002/req | Firecrawl HTML → markdown |
-| `openrouter_chat` | `POST /v1/services/openrouter/chat` | dynamic | OpenRouter LLM proxy |
+The catalog is live and large (~500 services). Always call
+`/v1/services/catalog` fresh — never hardcode a list, never cache for
+more than a minute.
 
-This list can change — always call the catalog endpoint fresh, never cache.
+### Payment-mode labels (IMPORTANT for the LLM)
+
+The catalog exposes a `verified_mode` field per service. The discover
+skill reads it and tags each record with a `payment_mode` string:
+
+- **`charge`** (`✓ verified charge`) — end-to-end verified to work with
+  this skill's Stellar charge flow. Safe to call. Currently known-good:
+  `exa_search`, `firecrawl_scrape`, `parallel_search`, `alchemy_rpc`,
+  `storage_upload`.
+- **`session`** (`⚠ session-only`) — upstream merchant is session-mode
+  only. MPP Router still advertises `stellar.intents: ["charge","channel"]`
+  for these and emits `intent="charge"` challenges, so the client signs
+  and pays **but the upstream rejects the payment receipt** and returns
+  a 404. **This is "pay-but-404" — real USDC is spent with no response
+  returned.** The router team has been notified; fix pending. Affected:
+  `gemini_generate`, `openai_chat`, `openrouter_chat`, `tempo_rpc`.
+  Do NOT route charges to these until `verified_mode` flips to `charge`.
+- **`unverified`** (`· unverified`) — the router hasn't labeled
+  `verified_mode` (or labeled it as the literal string `"false"`, which
+  is a router-side catalog-generator bug). ~97% of the catalog is in
+  this bucket. Most of these work but we can't prove it without a paid
+  probe. Treat as cautiously optimistic: acceptable to call on user
+  request, but warn the user that it's not formally verified.
+
+### Decision rule for the LLM
+
+When the user asks to call a paid API via MPP Router:
+
+1. Fetch the catalog fresh.
+2. Find the best service match.
+3. Check its `payment_mode`:
+   - `charge` → proceed silently.
+   - `session` → **refuse to call it.** Tell the user: "This service is
+     currently in session-only mode on MPP Router. Paying via Stellar
+     charge mode would succeed but the upstream would reject the
+     receipt, so you'd lose the fee with no result. Waiting on a
+     router-side fix. Alternative service?"
+   - `unverified` → proceed but surface a brief caveat in your
+     response ("this service isn't formally verified for Stellar charge
+     mode; proceeding anyway — let me know if the call fails after
+     payment").
+4. Never override the user's explicit instruction to call a `session`
+   service, but do warn them loudly before doing it.
 
 ## Service record shape
+
+Discover enriches each record with a `payment_mode` field (one of
+`charge`, `session`, `unverified`) derived from `verified_mode`. This
+is the field the LLM should branch on — it normalizes the router's
+raw `verified_mode` string (which can be missing or literally
+`"false"`) into a fixed vocabulary.
 
 ```json
 {
@@ -57,7 +102,8 @@ This list can change — always call the catalog endpoint fresh, never cache.
   "asset": "USDC",
   "status": "active",
   "methods": { "stellar": { "intents": ["charge", "channel"] } },
-  "verified_mode": "charge"
+  "verified_mode": "charge",
+  "payment_mode": "charge"
 }
 ```
 
