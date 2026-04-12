@@ -11,7 +11,7 @@ description: >
   api with stellar", or when the user shares a G... address with a payment intent.
 metadata:
   author: Shawn Yu
-  version: 1.1.6
+  version: 1.1.7
   license: MIT
   runtime: node
   homepage: https://www.mpprouter.dev/
@@ -106,6 +106,28 @@ This skill is a **Stellar wallet**. It signs on-chain transactions using a priva
 **`pay-per-call` will pay any URL you point it at.** Only use it against services you trust — a hostile 402 response can set the recipient to any address.
 
 See `references/mainnet-checklist.md` before pointing this at real money.
+
+### Secret handling guarantees
+
+The signing key is loaded from `.stellar-secret` (mode 600) by `scripts/src/secret.ts` and passed as a function argument to `scripts/src/stellar-signer.ts`. The secret is:
+
+- **Never printed** to stdout, stderr, or logs
+- **Never included** in HTTP headers, request bodies, or URLs
+- **Never returned** from any function — only the derived public key and signed XDR are returned
+- **Scoped to a single function call** — the `Keypair` object goes out of scope when `signSacTransfer()` returns
+
+The skill does not read environment variables for secrets. It does not use `process.env` for key material. All secret access goes through `loadSecretFromFile()` in `scripts/src/secret.ts`, which validates the Stellar strkey format before returning.
+
+### Network endpoints contacted
+
+This skill contacts only these endpoints (no other outbound connections):
+
+| Endpoint | Purpose |
+|---|---|
+| `apiserver.mpprouter.dev` | MPP Router service catalog + paid API calls |
+| `intentapiv4.rozo.ai` | Rozo cross-chain payment intents |
+| `horizon.stellar.org` | Stellar Horizon REST API (mainnet) |
+| `mainnet.sorobanrpc.com` | Soroban RPC (mainnet) |
 
 ---
 

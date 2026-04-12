@@ -1,6 +1,6 @@
 {
   "name": "stellar-agent-wallet",
-  "version": "1.1.6",
+  "version": "1.1.7",
   "description": "Stellar USDC wallet for AI agents. Pay 402-gated APIs (x402 or MPP Router), check balances, add USDC trustlines, swap XLM→USDC on the DEX, and send/bridge USDC cross-chain to EVM, Solana, or back to Stellar via Rozo. File-based secret storage, sponsored mode, testnet and mainnet.",
   "author": {
     "name": "Shawn Yu"

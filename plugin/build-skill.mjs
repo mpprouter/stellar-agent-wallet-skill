@@ -52,7 +52,7 @@ copyTree(join(REPO_ROOT, "references"), join(outDir, "references"));
 writeRendered(
   join(outDir, "package.json"),
   renderTemplate(
-    join(REPO_ROOT, "plugin", "package.json.tmpl"),
+    join(REPO_ROOT, "plugin", "package.skill.json.tmpl"),
     substitutions,
   ),
 );
