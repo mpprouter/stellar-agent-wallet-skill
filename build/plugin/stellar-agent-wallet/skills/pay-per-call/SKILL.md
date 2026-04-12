@@ -88,7 +88,7 @@ npx tsx skills/pay-per-call/run.ts <url> --receipt-out receipt.json
 ## Safety
 
 - ✅ **Credentials are single-use** — if the first retry fails, the credential is burned. Don't blindly re-retry; start fresh.
-- ✅ **All mainnet payments require confirmation** — by default, every pubnet call prompts for confirmation (`maxAutoUsd` default is 0). Override with `--yes` or `--max-auto <usd>` only after testing on testnet.
+- ✅ **Mainnet payments above $0.10 require confirmation** — micropayments up to $0.10 are auto-approved (covers typical MPP Router API calls at $0.001–$0.01). Override with `--max-auto <usd>` or `--yes`.
 - ✅ **Amount validation** — script verifies the 402 challenge amount matches the advertised service price (if known from catalog).
 - ❌ **Don't reuse a credential** — the HMAC binding to amount/currency/recipient is the router's defense against replay.
 

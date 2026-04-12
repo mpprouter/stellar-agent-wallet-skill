@@ -11,7 +11,7 @@ description: >
   api with stellar", or when the user shares a G... address with a payment intent.
 metadata:
   author: Shawn Yu
-  version: 1.1.8
+  version: 1.1.9
   license: MIT
   runtime: node
   homepage: https://www.mpprouter.dev/
@@ -75,7 +75,7 @@ metadata:
     - pay-per-call
     - send-payment
     - bridge
-  spending_confirmation_threshold_usd: 0
+  spending_confirmation_threshold_usd: 0.1
 
   # Outbound endpoints this skill contacts.
   network_endpoints:
@@ -101,7 +101,7 @@ This skill is a **Stellar wallet**. It signs on-chain transactions using a priva
 
 **Never paste your secret into any UI or chat you do not fully control.** Keep it in the secret file only.
 
-**All mainnet spending commands require confirmation by default.** `pay-per-call`, `send-payment`, and `bridge` all prompt before any mainnet payment. Pass `--yes` or `--max-auto <usd>` only after testing on testnet.
+**Mainnet spending commands require confirmation above $0.10.** `pay-per-call` auto-approves micropayments up to $0.10 (most MPP Router API calls are $0.001–$0.01). Payments above $0.10 prompt for confirmation. `send-payment` and `bridge` always prompt on mainnet. Override with `--yes` or `--max-auto <usd>`.
 
 **`pay-per-call` will pay any URL you point it at.** Only use it against services you trust — a hostile 402 response can set the recipient to any address.
 
