@@ -11,7 +11,7 @@ description: >
   api with stellar", or when the user shares a G... address with a payment intent.
 metadata:
   author: Shawn Yu
-  version: 1.1.3
+  version: 1.1.4
   license: MIT
   runtime: node
   homepage: https://www.mpprouter.dev/

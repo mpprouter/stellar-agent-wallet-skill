@@ -10,9 +10,14 @@
  * and is a pure library.
  */
 
+import * as mppx from "mppx";
 import { signSacTransfer, type SignerConfig } from "./stellar-signer.js";
 import { encodeX402Header, wrapX402, assertSponsored } from "./x402.js";
-import { encodeMppHeader, type MppChallenge } from "./mpp-envelope.js";
+import {
+  encodeMppHeader,
+  type MppChallenge,
+  type MppChargeRequest,
+} from "./mpp-envelope.js";
 
 export interface ParsedChallenge {
   dialect: "x402" | "mpp";
@@ -39,24 +44,31 @@ export interface ParsedChallenge {
  * See skills/pay-per-call/SKILL.md for the rationale.
  */
 export async function parse402(res: Response): Promise<ParsedChallenge | null> {
-  // 1. MPP dialect — WWW-Authenticate header.
+  // 1. MPP dialect — WWW-Authenticate: Payment <auth-params>.
+  //
+  // Delegated to `mppx.Challenge.deserialize`. It walks the full RFC 7235
+  // auth-params (quoted-string aware, handles multi-scheme headers),
+  // base64url-decodes the nested `request` and `opaque` fields into
+  // structured values, and runs zod validation via Challenge.Schema.
+  // On success we hand the resulting `Challenge` directly to the
+  // credential serializer, so the HMAC-bound `id` round-trips byte-for-byte.
   const wwwAuth = res.headers.get("www-authenticate");
-  if (wwwAuth && wwwAuth.toLowerCase().startsWith("payment")) {
-    // RFC 7235 auth-param values may be quoted or unquoted.
-    // MPP Router emits `Payment request="<base64>"`; older/simpler
-    // servers emit `Payment request=<base64>`. Accept both.
-    const match = wwwAuth.match(/request="?([A-Za-z0-9+/=_-]+)"?/);
-    if (match) {
-      const decoded = Buffer.from(match[1], "base64url").toString("utf8");
-      const challenge = JSON.parse(decoded);
+  if (wwwAuth) {
+    try {
+      const mppChallenge = mppx.Challenge.deserialize(wwwAuth);
+      const req = mppChallenge.request as MppChargeRequest;
       return {
         dialect: "mpp",
-        amount: challenge.amount,
-        asset: challenge.currency,
-        payTo: challenge.recipient,
-        maxTimeoutSeconds: challenge.methodDetails?.maxTimeoutSeconds ?? 60,
-        raw: challenge,
+        amount: req.amount,
+        asset: req.currency,
+        payTo: req.recipient,
+        maxTimeoutSeconds:
+          (req.methodDetails?.maxTimeoutSeconds as number | undefined) ?? 60,
+        raw: mppChallenge,
       };
+    } catch {
+      // Not a Payment scheme, or missing/invalid request param — fall
+      // through to the x402 branches.
     }
   }
 

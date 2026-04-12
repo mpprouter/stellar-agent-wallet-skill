@@ -11,18 +11,23 @@ description: >
   api with stellar", or when the user shares a G... address with a payment intent.
 metadata:
   author: Shawn Yu
-  version: 1.1.3
+  version: 1.1.4
   license: MIT
   runtime: node
   homepage: https://www.mpprouter.dev/
   repository: https://github.com/mpprouter/stellar-agent-wallet-skill
 
   # Runtime dependencies. These are the only packages the code imports.
-  # @stellar/mpp, mppx, @x402/* are documented in references/ as alternate
-  # library paths but this skill does not import them.
+  # - @stellar/stellar-sdk: transaction building + signing
+  # - mppx: authoritative RFC 7235 `Payment` scheme codec (Challenge +
+  #   Credential serialize/deserialize). Used by scripts/src/mpp-envelope.ts
+  #   and scripts/src/pay-engine.ts so the wire format stays byte-identical
+  #   to the reference implementation.
+  # - tsx: runs the .ts entry points directly.
   dependencies:
     required:
       - "@stellar/stellar-sdk"
+      - mppx
       - tsx
 
   # Secret handling.
