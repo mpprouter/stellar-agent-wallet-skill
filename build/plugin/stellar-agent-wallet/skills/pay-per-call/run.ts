@@ -34,7 +34,7 @@ interface CmdArgs {
 }
 
 function parseCmdArgs(rest: string[]): CmdArgs {
-  const a: CmdArgs = { method: "GET", json: false, yes: false, maxAutoUsd: 1.0 };
+  const a: CmdArgs = { method: "GET", json: false, yes: false, maxAutoUsd: 0 };
   for (let i = 0; i < rest.length; i++) {
     const k = rest[i];
     if (k === "--method") a.method = rest[++i];

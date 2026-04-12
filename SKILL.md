@@ -11,7 +11,7 @@ description: >
   api with stellar", or when the user shares a G... address with a payment intent.
 metadata:
   author: Shawn Yu
-  version: 1.1.7
+  version: 1.1.8
   license: MIT
   runtime: node
   homepage: https://www.mpprouter.dev/
@@ -75,7 +75,7 @@ metadata:
     - pay-per-call
     - send-payment
     - bridge
-  spending_confirmation_threshold_usd: 1.0
+  spending_confirmation_threshold_usd: 0
 
   # Outbound endpoints this skill contacts.
   network_endpoints:
@@ -101,7 +101,7 @@ This skill is a **Stellar wallet**. It signs on-chain transactions using a priva
 
 **Never paste your secret into any UI or chat you do not fully control.** Keep it in the secret file only.
 
-**Spending commands (`pay-per-call`, `send-payment`, `bridge`) prompt for confirmation above $1 USD** and every time on mainnet for `send-payment` / `bridge`. Pass `--yes` only after testing on testnet.
+**All mainnet spending commands require confirmation by default.** `pay-per-call`, `send-payment`, and `bridge` all prompt before any mainnet payment. Pass `--yes` or `--max-auto <usd>` only after testing on testnet.
 
 **`pay-per-call` will pay any URL you point it at.** Only use it against services you trust — a hostile 402 response can set the recipient to any address.
 
