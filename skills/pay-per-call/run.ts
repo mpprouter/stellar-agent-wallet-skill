@@ -98,10 +98,11 @@ async function dumpResponse(res: Response, jsonMode: boolean) {
 
 async function runPayFlow(inputs: RunInputs): Promise<void> {
   const { args, signerConfig } = inputs;
+  const canHaveBody = !["GET", "HEAD"].includes(args.method.toUpperCase());
   const init: RequestInit = {
     method: args.method,
-    headers: args.body ? { "Content-Type": "application/json" } : undefined,
-    body: args.body,
+    headers: args.body && canHaveBody ? { "Content-Type": "application/json" } : undefined,
+    body: canHaveBody ? args.body : undefined,
   };
 
   let res = await fetch(args.url!, init);
