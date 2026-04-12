@@ -1,65 +1,32 @@
 /**
- * MPP charge envelope encoder — pure library.
+ * MPP charge envelope encoder — thin wrapper over `mppx.Credential`.
  *
- * Wraps a signed Stellar XDR as an `mppx.Credential` for the
- * `Authorization: Payment <base64url-json>` header.
+ * Historically this file hand-rolled the wire format (RFC 8785 canonicalize,
+ * base64url JSON packing, DID construction). Every time mppx changed a
+ * detail we drifted and shipped a regression (v1.1.0 through v1.1.3 each
+ * fixed a different manifestation). Since mppx now ships the authoritative
+ * serializer as a pure library with no peer deps beyond ox/zod/viem, we
+ * delegate directly and this file stays a ~20-line adapter.
  *
- * Wire shape (matches the mppx library — see Credential.ts / Challenge.ts
- * in the `mppx` package for the authoritative spec):
- *
- *     {
- *       challenge: {                          // full challenge echoed back
- *         id, realm, method, intent,
- *         request: <canonicalized base64url of request>,
- *         [expires], [description], [digest],
- *         [opaque: <canonicalized base64url of opaque>]
- *       },
- *       payload: { type: "transaction", transaction: <base64 XDR> },
- *       source: `did:pkh:${network}:${pubkey}`
- *     }
- *
- * The whole thing is then `JSON.stringify` + base64url (no padding).
- *
- * Critical details:
- *  - Both `request` and `opaque` are re-serialized via RFC 8785
- *    canonicalize (sorted keys, no whitespace) so the HMAC binding on
- *    `challenge.id` survives the client round-trip.
- *  - `source` DID uses the network string as received (e.g. `stellar:pubnet`);
- *    do NOT prepend `stellar:` — the network already carries the chain name.
- *  - `payload` is a DISCRIMINATED UNION of `{ type: "transaction", transaction }`
- *    or `{ type: "hash", hash }`. We only emit the `transaction` variant
- *    because this skill's signer always produces a signed XDR for the
- *    sponsored (pull) flow.
+ * What we still own:
+ *  - Choosing the `source` DID from the challenge-provided `network` field
+ *    (`did:pkh:${network}:${pubkey}` — note `network` already carries the
+ *    `stellar:` chain prefix, so we must NOT prepend another).
+ *  - Emitting the `{type: "transaction", transaction}` payload variant.
+ *    mppx treats `payload` as an opaque discriminated union; the charge
+ *    flow always produces a signed XDR.
  */
+import * as mppx from "mppx";
 
 /**
- * Parsed MPP challenge — mirrors `mppx.Challenge.Challenge` after
- * `request` and `opaque` have been base64url-decoded into structured
- * objects. This is what `parse402()` puts into `ParsedChallenge.raw`
- * and what `encodeMppHeader()` consumes.
+ * Re-export mppx's Challenge type under the name the rest of the skill
+ * uses. This is the authoritative shape — `id, realm, method, intent,
+ * request, expires?, description?, digest?, opaque?` — with `request`
+ * and `opaque` as structured objects (not base64url strings).
  */
-export interface MppChallenge {
-  /** HMAC-bound challenge ID from the server. */
-  id: string;
-  /** Server realm (hostname). */
-  realm: string;
-  /** Payment method (e.g. `"stellar"`). */
-  method: string;
-  /** Intent type (e.g. `"charge"`). */
-  intent: string;
-  /** Method-specific request payload (decoded from the base64url `request` auth-param). */
-  request: MppChargeRequest;
-  /** Optional ISO 8601 expiration timestamp. */
-  expires?: string;
-  /** Optional human-readable description. */
-  description?: string;
-  /** Optional request body digest (`sha-256=<base64>`). */
-  digest?: string;
-  /** Optional server-defined correlation data (decoded from the base64url `opaque` auth-param). */
-  opaque?: Record<string, string>;
-}
+export type MppChallenge = mppx.Challenge.Challenge;
 
-/** The `stellar.charge` request payload shape. */
+/** The `stellar.charge` request payload shape — narrows `challenge.request`. */
 export interface MppChargeRequest {
   amount: string;
   currency: string;
@@ -82,86 +49,18 @@ export function encodeMppHeader(
   signerPubkey: string,
   challenge: MppChallenge,
 ): string {
-  // The `network` field comes from the server challenge. It already
+  const req = challenge.request as MppChargeRequest;
+  // The `network` field comes from the server challenge; it already
   // carries the chain name (`stellar:pubnet` / `stellar:testnet`), so
-  // the DID is `did:pkh:${network}:${pubkey}` — NOT `did:pkh:stellar:${network}:...`
-  // (which would produce the buggy `did:pkh:stellar:stellar:pubnet:...`).
-  const network = challenge.request.methodDetails?.network ?? "stellar:pubnet";
+  // the DID is `did:pkh:${network}:${pubkey}` — NOT
+  // `did:pkh:stellar:${network}:...` (which was the v1.1.2 bug producing
+  // `did:pkh:stellar:stellar:pubnet:...`).
+  const network = req.methodDetails?.network ?? "stellar:pubnet";
   const source = `did:pkh:${network}:${signerPubkey}`;
 
-  // Wire shape matches mppx.Credential.serialize (see Credential.ts:131-143
-  // in the mppx source): `request` is re-canonicalized + base64url'd so the
-  // HMAC binding on `challenge.id` survives the round-trip; everything else
-  // — including `opaque` — is spread through as a structured value. The
-  // Challenge schema treats `opaque` as a `Record<string, string>`, NOT a
-  // base64url string, so re-encoding it here would fail zod parsing on the
-  // server with `expected 'record', received 'string'`.
-  const wire = {
-    challenge: {
-      id: challenge.id,
-      realm: challenge.realm,
-      method: challenge.method,
-      intent: challenge.intent,
-      request: base64urlEncode(canonicalize(challenge.request)),
-      ...(challenge.description !== undefined && {
-        description: challenge.description,
-      }),
-      ...(challenge.digest !== undefined && { digest: challenge.digest }),
-      ...(challenge.expires !== undefined && { expires: challenge.expires }),
-      ...(challenge.opaque !== undefined && { opaque: challenge.opaque }),
-    },
-    payload: {
-      type: "transaction" as const,
-      transaction: transactionXdr,
-    },
+  return mppx.Credential.serialize({
+    challenge,
+    payload: { type: "transaction", transaction: transactionXdr },
     source,
-  };
-
-  const json = JSON.stringify(wire);
-  return "Payment " + base64urlEncode(json);
-}
-
-/**
- * RFC 8785 JSON Canonicalization Scheme — same behavior as
- * `ox/Json.canonicalize` which the mppx library uses.
- *
- *  - Object keys sorted recursively by UTF-16 code unit order
- *  - No whitespace
- *  - `undefined` members dropped
- *  - Primitives use ECMAScript rules (no trailing zeros, etc.)
- *
- * This implementation is limited to the JSON subset — no bigint, no
- * non-finite numbers — because MPP challenges only contain those
- * types anyway.
- */
-function canonicalize(value: unknown): string {
-  if (value === null) return "null";
-  if (typeof value === "boolean") return value ? "true" : "false";
-  if (typeof value === "string") return JSON.stringify(value);
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) {
-      throw new TypeError("Cannot canonicalize non-finite number");
-    }
-    return Object.is(value, -0) ? "0" : JSON.stringify(value);
-  }
-  if (Array.isArray(value)) {
-    return "[" + value.map(canonicalize).join(",") + "]";
-  }
-  if (typeof value === "object") {
-    const entries: string[] = [];
-    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-      const v = (value as Record<string, unknown>)[key];
-      if (v === undefined) continue;
-      entries.push(JSON.stringify(key) + ":" + canonicalize(v));
-    }
-    return "{" + entries.join(",") + "}";
-  }
-  throw new TypeError(
-    `Cannot canonicalize value of type ${typeof value}`,
-  );
-}
-
-/** Base64url encode (unpadded) a UTF-8 string. */
-function base64urlEncode(value: string): string {
-  return Buffer.from(value, "utf8").toString("base64url");
+  });
 }

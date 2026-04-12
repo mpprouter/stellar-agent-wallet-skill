@@ -12,9 +12,7 @@
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^15.0.1",
+    "mppx": "^0.4.11",
     "tsx": "^4.21.0"
-  },
-  "devDependencies": {
-    "mppx": "0.4.11"
   }
 }
