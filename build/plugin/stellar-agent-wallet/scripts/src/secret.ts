@@ -19,25 +19,43 @@ const REDACTED = "[REDACTED:signing-key]";
 const STELLAR_SECRET_RE = /^S[A-Z0-9]{55}$/;
 
 /**
- * Try to extract STELLAR_SECRET from a dotenv file.
- * Returns the value if found and valid, otherwise undefined.
+ * Env var names that may hold a Stellar secret key. Checked in order;
+ * first one that matches the strkey format wins.
+ *
+ * The canonical name is STELLAR_SECRET. The others are accepted for
+ * compatibility with older setups — loadSecretFromFile reports which
+ * name was used so callers (e.g. onboard) can offer a migration hint.
  */
-// Env var names that may hold a Stellar secret key, checked in order.
-const SECRET_ENV_KEYS = [
+export const PREFERRED_SECRET_ENV_KEY = "STELLAR_SECRET";
+export const SECRET_ENV_KEYS = [
   "STELLAR_SECRET",
   "STELLAR_SECRET_KEY",
   "STELLAR_PRIVATE_KEY",
   "STELLAR_PRIVATE",
-];
+] as const;
+export type SecretEnvKey = (typeof SECRET_ENV_KEYS)[number];
 
-function tryLoadFromEnvFile(envPath: string): string | undefined {
+export interface SecretSource {
+  /** Absolute path where the secret was found. */
+  path: string;
+  /** "file" = one-secret-per-line file; "env" = dotenv-format KEY=VALUE. */
+  kind: "file" | "env";
+  /** Which env key matched. Only set for kind === "env". */
+  envKey?: SecretEnvKey;
+}
+
+interface DotEnvHit {
+  value: string;
+  key: SecretEnvKey;
+}
+
+function tryLoadFromEnvFile(envPath: string): DotEnvHit | undefined {
   let raw: string;
   try {
     raw = fs.readFileSync(envPath, "utf8");
   } catch {
     return undefined;
   }
-  // Parse all env vars into a map, then check known key names in priority order.
   const vars = new Map<string, string>();
   for (const line of raw.split(/\r?\n/)) {
     const trimmed = line.trim();
@@ -50,7 +68,9 @@ function tryLoadFromEnvFile(envPath: string): string | undefined {
   }
   for (const key of SECRET_ENV_KEYS) {
     const val = vars.get(key);
-    if (val && STELLAR_SECRET_RE.test(val)) return val;
+    if (val && STELLAR_SECRET_RE.test(val)) {
+      return { value: val, key };
+    }
   }
   return undefined;
 }
@@ -66,25 +86,42 @@ function tryLoadFromEnvFile(envPath: string): string | undefined {
  * (relative to the secret file's directory) for a STELLAR_SECRET= line.
  */
 export function loadSecretFromFile(path: string): string {
+  return loadSecretWithSource(path).secret;
+}
+
+/**
+ * Like loadSecretFromFile but also returns where the secret came from.
+ * onboard uses the source info to suggest a migration from legacy env
+ * key names to the canonical STELLAR_SECRET.
+ */
+export function loadSecretWithSource(
+  path: string,
+): { secret: string; source: SecretSource } {
   let raw: string;
   try {
     raw = fs.readFileSync(path, "utf8");
   } catch (err: any) {
     if (err?.code === "ENOENT") {
-      // Fallback: check .env.prod, then .env in the same directory
       const dir = nodePath.dirname(nodePath.resolve(path));
       const envFallbacks = [
         nodePath.join(dir, ".env.prod"),
         nodePath.join(dir, ".env"),
       ];
       for (const envPath of envFallbacks) {
-        const secret = tryLoadFromEnvFile(envPath);
-        if (secret) {
+        const hit = tryLoadFromEnvFile(envPath);
+        if (hit) {
+          const legacyNote =
+            hit.key === PREFERRED_SECRET_ENV_KEY
+              ? ""
+              : ` (legacy key name — rename to ${PREFERRED_SECRET_ENV_KEY})`;
           console.error(
-            `ℹ️  Secret file ${path} not found; loaded STELLAR_SECRET from ${envPath}`,
+            `ℹ️  Secret file ${path} not found; loaded ${hit.key} from ${envPath}${legacyNote}`,
           );
-          installRedactor(secret);
-          return secret;
+          installRedactor(hit.value);
+          return {
+            secret: hit.value,
+            source: { path: envPath, kind: "env", envKey: hit.key },
+          };
         }
       }
       throw new Error(
@@ -117,7 +154,10 @@ export function loadSecretFromFile(path: string): string {
   }
 
   installRedactor(line);
-  return line;
+  return {
+    secret: line,
+    source: { path: nodePath.resolve(path), kind: "file" },
+  };
 }
 
 /**
