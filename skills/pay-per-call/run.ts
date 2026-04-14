@@ -82,7 +82,7 @@ async function promptConfirm(message: string): Promise<boolean> {
 }
 
 async function dumpResponse(res: Response, jsonMode: boolean) {
-  if (!res.ok) {
+  if (!res.ok && res.status !== 202) {
     console.error(`❌ ${res.status} ${res.statusText}`);
     console.error(await res.text());
     process.exit(1);
@@ -96,16 +96,129 @@ async function dumpResponse(res: Response, jsonMode: boolean) {
   }
 }
 
+/**
+ * Poll an async job until it completes or times out.
+ * Uses the same auth headers from the initial request so the
+ * router can verify the caller is the original payer.
+ */
+async function pollJobStatus(
+  pollUrl: string,
+  authHeaders: HeadersInit,
+  jsonMode: boolean,
+  intervalMs = 5000,
+  timeoutMs = 600000, // 10 minutes
+): Promise<boolean> {
+  const start = Date.now();
+  let attempt = 0;
+
+  while (Date.now() - start < timeoutMs) {
+    attempt++;
+    await new Promise((r) => setTimeout(r, intervalMs));
+
+    const res = await fetch(pollUrl, { headers: authHeaders });
+
+    if (res.status === 202 || res.status === 200) {
+      let body: any;
+      try {
+        body = await res.json();
+      } catch {
+        console.error(`   Attempt ${attempt}: non-JSON response (${res.status})`);
+        continue;
+      }
+
+      const status = body.status ?? body.state ?? "";
+      if (
+        status === "pending" ||
+        status === "processing" ||
+        status === "in_progress"
+      ) {
+        console.error(`   Attempt ${attempt}: ${status}...`);
+        continue;
+      }
+
+      // Job completed (or unknown status) — dump result
+      console.error(`✅ Job completed after ${attempt} polls`);
+      console.log(
+        jsonMode ? JSON.stringify(body) : JSON.stringify(body, null, 2),
+      );
+      return true;
+    }
+
+    if (res.status === 404) {
+      console.error(`❌ Job not found (expired or invalid)`);
+      process.exit(1);
+    }
+
+    console.error(
+      `   Attempt ${attempt}: unexpected status ${res.status}, retrying...`,
+    );
+  }
+
+  console.error(`❌ Timeout after ${timeoutMs / 1000}s waiting for job`);
+  process.exit(1);
+}
+
+function buildInit(method: string, body?: string): RequestInit {
+  const canHaveBody = !["GET", "HEAD"].includes(method.toUpperCase());
+  return {
+    method,
+    headers: body && canHaveBody ? { "Content-Type": "application/json" } : undefined,
+    body: canHaveBody ? body : undefined,
+  };
+}
+
+/**
+ * Ask the response whether the path exists under a different HTTP method.
+ * Modern router replies 405 with `allowed_methods`; older deployments
+ * reply 400 with the legacy "Unknown public service route" string and
+ * no hint, so we fall back to probing the catalog by public_path.
+ */
+async function detectMethodMismatch(
+  url: string,
+  res: Response,
+): Promise<string | null> {
+  if (res.status === 405) {
+    try {
+      const j = (await res.clone().json()) as { allowed_methods?: string[] };
+      const m = j.allowed_methods?.[0];
+      if (m) return m;
+    } catch {}
+    const allow = res.headers.get("allow");
+    if (allow) return allow.split(",")[0].trim();
+  }
+  if (res.status === 400) {
+    const u = new URL(url);
+    if (!u.host.endsWith("mpprouter.dev")) return null;
+    let body: string;
+    try { body = await res.clone().text(); } catch { return null; }
+    if (!body.includes("Unknown public service route")) return null;
+    try {
+      const cat = await fetch(`${u.origin}/v1/services/catalog`);
+      if (!cat.ok) return null;
+      const j = (await cat.json()) as { services?: Array<{ public_path: string; method: string }> };
+      const hit = j.services?.find(s => s.public_path === u.pathname);
+      return hit?.method ?? null;
+    } catch { return null; }
+  }
+  return null;
+}
+
 async function runPayFlow(inputs: RunInputs): Promise<void> {
   const { args, signerConfig } = inputs;
-  const canHaveBody = !["GET", "HEAD"].includes(args.method.toUpperCase());
-  const init: RequestInit = {
-    method: args.method,
-    headers: args.body && canHaveBody ? { "Content-Type": "application/json" } : undefined,
-    body: canHaveBody ? args.body : undefined,
-  };
+  let init = buildInit(args.method, args.body);
 
   let res = await fetch(args.url!, init);
+
+  const correctMethod = await detectMethodMismatch(args.url!, res);
+  if (correctMethod && correctMethod.toUpperCase() !== args.method.toUpperCase()) {
+    console.error(
+      `⚠️  ${args.method} rejected; router says use ${correctMethod}. Retrying.`,
+    );
+    args.method = correctMethod;
+    init = buildInit(args.method, args.body);
+    res = await fetch(args.url!, init);
+  }
+
   if (res.status !== 402) {
     await dumpResponse(res, args.json);
     return;
@@ -150,6 +263,22 @@ async function runPayFlow(inputs: RunInputs): Promise<void> {
     console.error(`📝 Receipt saved to ${args.receiptOut}`);
   } else if (receipt) {
     console.error(`📝 Payment-Receipt: ${receipt}`);
+  }
+
+  // Handle async 202 — poll until job completes
+  if (res.status === 202) {
+    const pollUrl = res.headers.get("x-job-poll-url");
+    const jobId = res.headers.get("x-job-id");
+    if (pollUrl) {
+      console.error(`⏳ Async job started (id=${jobId ?? "unknown"})`);
+      console.error(`   Poll URL: ${pollUrl}`);
+      const result = await pollJobStatus(pollUrl, retryHeaders, args.json);
+      if (result) return;
+    } else {
+      // No poll URL — just dump the 202 body
+      await dumpResponse(res, args.json);
+      return;
+    }
   }
 
   await dumpResponse(res, args.json);

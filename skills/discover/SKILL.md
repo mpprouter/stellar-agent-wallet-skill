@@ -31,7 +31,7 @@ High-level discovery for the MPP Router service catalog. Lets agents find and ca
    - If only `docs.api_reference` → read that instead.
    - If only `docs.homepage` → browse it for the API format.
    - If no docs at all → ask the user for the request body format, or try a minimal probe.
-4. **Invoke** — `POST {base_url}{public_path}` with the correct request body. Expect `402 Payment Required` with a Stellar challenge in `WWW-Authenticate: Payment request=...`.
+4. **Invoke** — `{method} {base_url}{public_path}` with the correct request body. Use the `method` field from the catalog entry — most services are POST, but a few are GET; do not assume. Expect `402 Payment Required` with a Stellar challenge in `WWW-Authenticate: Payment request=...`.
 5. **Pay** — hand off to `pay-per-call` with the 402 challenge; it produces a signed credential.
 6. **Retry** — re-POST the same body with `Authorization: Payment <credential>`. Receive the upstream response + `Payment-Receipt` header.
 
@@ -155,11 +155,14 @@ npx tsx skills/discover/run.ts --json
 ## Full end-to-end example
 
 ```bash
-# Discover which service to use
-SERVICE=$(npx tsx skills/discover/run.ts --query "web search" --pick-one --json | jq -r '.public_path')
+# Discover which service to use — capture path AND method
+SERVICE_JSON=$(npx tsx skills/discover/run.ts --query "web search" --pick-one --json)
+SERVICE=$(echo "$SERVICE_JSON" | jq -r '.public_path')
+METHOD=$(echo "$SERVICE_JSON" | jq -r '.method')
 
 # Call it — pay-per-call handles the 402 → pay → retry loop
 npx tsx skills/pay-per-call/run.ts "https://apiserver.mpprouter.dev$SERVICE" \
+  --method "$METHOD" \
   --body '{"query": "Summarize https://stripe.com/docs"}'
 ```
 

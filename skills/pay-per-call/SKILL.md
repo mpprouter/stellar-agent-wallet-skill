@@ -22,10 +22,18 @@ The "execute" step of the wallet agent. Call a paid HTTP endpoint, handle the 40
 
 ## Prerequisites
 
-Before calling a service, you need to know its request body format.
-The MPP Router **forwards request bodies as-is** — it does not
-transform or validate them.
+Before calling a service, you need TWO things: the HTTP method and
+the request body shape. The MPP Router **forwards both as-is** — it
+does not transform, validate, or guess.
 
+**HTTP method — do NOT default to GET.** Most MPP Router services are
+POST-only. The catalog `method` field is authoritative; pass it via
+`--method`. Calling the wrong method returns 405 with `allowed_methods`
+in the body (older deployments may return 400 "Unknown public service
+route" — same root cause). The script auto-recovers from 405 once,
+but the right move is to read the catalog up front.
+
+**Request body shape:**
 - **If you already know the schema** (e.g. from the user's prompt or
   prior context) → proceed directly.
 - **If you don't** → run `discover` first. The service's `docs` field
@@ -84,6 +92,25 @@ npx tsx skills/pay-per-call/run.ts <url> --body '{...}' --json
 # Save payment receipt to file
 npx tsx skills/pay-per-call/run.ts <url> --receipt-out receipt.json
 ```
+
+## Async jobs (202 responses)
+
+Some services (e.g. StableStudio video generation) are async — the paid
+request returns `202 Accepted` with a `jobId` instead of an immediate
+result. When this happens:
+
+1. The MPP Router stores a job auth record binding the job to your
+   Stellar address and returns headers:
+   - `X-Job-Poll-Url` — the full URL to poll
+   - `X-Job-Id` — the job identifier
+2. This skill automatically polls the `X-Job-Poll-Url` every 5 seconds
+   using the same Stellar credentials for identity verification.
+3. Polling is **free** — no additional USDC is charged.
+4. Job results are available for **24 hours** after creation.
+5. The poll loop times out after 10 minutes. For longer jobs, re-run
+   with the poll URL manually.
+
+If there is no `X-Job-Poll-Url` header, the 202 body is printed as-is.
 
 ## Safety
 
