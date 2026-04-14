@@ -11,7 +11,7 @@ description: >
   api with stellar", or when the user shares a G... address with a payment intent.
 metadata:
   author: Shawn Yu
-  version: 1.2.1
+  version: 1.3.0
   license: MIT
   runtime: node
   homepage: https://www.mpprouter.dev/
@@ -139,13 +139,65 @@ Client-only Stellar wallet for AI agents. Organized as a router over five sub-sk
 
 | Command | What it does | When it triggers |
 |---|---|---|
-| `stellar-balance` | Check USDC/XLM, add trustline, swap XLM→USDC | "check balance", "add trustline", "swap xlm" |
-| `discover-mpprouter` | List paid services on MPP Router catalog | "list mpp services", "find API for X via mpprouter" |
+| `onboard` | Wallet readiness check: secret, XLM, trustline, USDC. Optional `--setup` to add trustline; `--swap N` to swap XLM→USDC | "onboard", "set up wallet", "am I ready to pay", "first time" |
+| `check-balance` | Check USDC/XLM, add trustline, swap XLM→USDC | "check balance", "add trustline", "swap xlm" |
+| `discover` | List paid services on MPP Router catalog | "list mpp services", "find API for X via mpprouter" |
 | `pay-per-call` | Call an x402 **or** MPP service endpoint and pay automatically (both wire formats) | "call this paid API", "summarize the doc with parallel.ai via mpprouter.dev" |
 | `send-payment` | Cross-chain USDC payout via Rozo | "pay 0x... on base", "transfer usdc to <addr>" |
 | `bridge` | Move your own USDC Stellar→other chain | "bridge to base", "deposit usdc onto ethereum" |
 
 Each sub-skill has its own `SKILL.md` and `run.ts` in `skills/<name>/`.
+
+## How to use
+
+On a fresh machine, work top-down. Each step reads the sub-skill's
+`SKILL.md` before running its script.
+
+1. **`onboard`** — read `skills/onboard/SKILL.md`, then run it. Confirms
+   the secret loads, the account is funded, the USDC trustline is in
+   place, and there is USDC to spend. Prints the exact next command for
+   any gap. This is the only step that is mandatory on a new machine.
+2. **`check-balance`** — read `skills/check-balance/SKILL.md` to see
+   balance, trustline, and swap commands once the wallet is live.
+3. **`discover`** — read `skills/discover/SKILL.md`, then query the MPP
+   Router catalog to find a paid service. Capture `public_path` and the
+   `method` field.
+4. **`pay-per-call`** — read `skills/pay-per-call/SKILL.md`, then call
+   the service with the method and body. It handles 402 → sign → retry.
+
+## Example run
+
+```bash
+# 0. One-time: install deps and generate a keypair
+pnpm add @stellar/stellar-sdk mppx tsx
+npx tsx scripts/generate-keypair.ts
+
+# 1. Onboard — are we ready to pay?
+npx tsx skills/onboard/run.ts
+# → prints ✅/⚠️/❌ per check:
+#     ❌ [trustline] USDC Classic trustline not set
+#        Run: npx tsx skills/check-balance/add-trustline.ts --network pubnet
+#     ❌ [usdc] USDC balance is zero
+
+# 2. Run setup: add trustline + swap 1 XLM for USDC
+npx tsx skills/onboard/run.ts --setup --swap 1
+# → confirms trustline, delegates to swap-xlm-to-usdc.ts
+
+# 3. Check balance now that we're set up
+npx tsx skills/check-balance/run.ts
+# → USDC 0.07..., XLM 0.5 (spendable)
+
+# 4. Discover a paid API (capture path AND method)
+SERVICE=$(npx tsx skills/discover/run.ts --query "web search" --pick-one --json)
+PATH_=$(echo "$SERVICE" | jq -r '.public_path')
+METHOD=$(echo "$SERVICE" | jq -r '.method')
+
+# 5. Call it — pay-per-call handles the 402 → sign → retry loop
+npx tsx skills/pay-per-call/run.ts "https://apiserver.mpprouter.dev$PATH_" \
+  --method "$METHOD" \
+  --body '{"query": "Summarize https://stripe.com/docs"}'
+# → 💸 Payment required (mpp) → signs → returns upstream result + Payment-Receipt
+```
 
 ## When to reach for Discover
 
@@ -303,8 +355,12 @@ stellar-agent-wallet/
 │       ├── mpprouter-client.ts       ← MPP Router catalog client
 │       ├── pay-engine.ts             ← 402 parse + retry orchestrator
 │       ├── x402.ts                   ← x402 envelope encoder
-│       └── mpp-envelope.ts           ← MPP charge envelope encoder
+│       ├── mpp-envelope.ts           ← MPP charge envelope encoder
+│       └── balance.ts                ← shared balance reader (onboard + check-balance)
 └── skills/                         ← sub-skills (run directly)
+    ├── onboard/
+    │   ├── SKILL.md
+    │   └── run.ts                    ← readiness check + guided setup
     ├── check-balance/
     │   ├── SKILL.md
     │   ├── run.ts                    ← balance check
