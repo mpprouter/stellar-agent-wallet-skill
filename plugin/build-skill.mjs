@@ -22,7 +22,7 @@ import {
   writeRendered,
   stampVersionInFile,
   substitutionsFrom,
-  installDeps,
+  writeLockfile,
   log,
 } from "./build-lib.mjs";
 
@@ -63,9 +63,19 @@ writeRendered(
 //    but we keep the hook for future use).
 stampVersionInFile(join(outDir, "SKILL.md"), versionInfo.version);
 
-// 8. Install production dependencies so the skill ships with node_modules.
-//    Without this, agents must run `npm install` after plugin installation,
-//    which fails when only pnpm-lock.yaml exists (npm ignores it).
-installDeps(outDir, "skill");
+// 8. Copy the first-run dep installer to the skill root. The skill ships
+//    WITHOUT node_modules to keep the artifact small (~220 KB vs ~134 MB).
+//    Users run `node prepare.mjs` once after install.
+writeRendered(
+  join(outDir, "prepare.mjs"),
+  renderTemplate(
+    join(REPO_ROOT, "plugin", "prepare.mjs.tmpl"),
+    substitutions,
+  ),
+);
+
+// 9. Generate package-lock.json for deterministic first-run installs,
+//    but do NOT install node_modules. See build-plugin.mjs for rationale.
+writeLockfile(outDir, "skill");
 
 log("skill", "Done.");
