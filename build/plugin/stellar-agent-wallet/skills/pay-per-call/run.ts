@@ -21,7 +21,11 @@ import {
 } from "../../scripts/src/pay-engine.js";
 import type { SignerConfig } from "../../scripts/src/stellar-signer.js";
 import { parseBase, type BaseConfig } from "../../scripts/src/cli-config.js";
-import { loadSecretFromFile } from "../../scripts/src/secret.js";
+import {
+  loadSecretFromFile,
+  readAutopayCeiling,
+  writeAutopayCeiling,
+} from "../../scripts/src/secret.js";
 
 interface CmdArgs {
   url?: string;
@@ -29,19 +33,29 @@ interface CmdArgs {
   body?: string;
   json: boolean;
   yes: boolean;
-  maxAutoUsd: number;
+  /** Explicit per-invocation ceiling. undefined → use ceiling from secret file. */
+  maxAutoUsd?: number;
   receiptOut?: string;
+  /** Force a prompt even if the autopay ceiling would allow auto-pay. */
+  noAutopay: boolean;
 }
 
 function parseCmdArgs(rest: string[]): CmdArgs {
-  const a: CmdArgs = { method: "GET", json: false, yes: false, maxAutoUsd: 0.1 };
+  const a: CmdArgs = { method: "GET", json: false, yes: false, noAutopay: false };
   for (let i = 0; i < rest.length; i++) {
     const k = rest[i];
     if (k === "--method") a.method = rest[++i];
     else if (k === "--body") a.body = rest[++i];
     else if (k === "--json") a.json = true;
     else if (k === "--yes" || k === "-y") a.yes = true;
-    else if (k === "--max-auto") a.maxAutoUsd = parseFloat(rest[++i]);
+    else if (k === "--max-auto") {
+      const v = parseFloat(rest[++i]);
+      if (!Number.isFinite(v) || v < 0) {
+        console.error("--max-auto must be a non-negative number");
+        process.exit(1);
+      }
+      a.maxAutoUsd = v;
+    } else if (k === "--no-autopay") a.noAutopay = true;
     else if (k === "--receipt-out") a.receiptOut = rest[++i];
     else if (!k.startsWith("--") && !a.url) a.url = k;
   }
@@ -79,6 +93,110 @@ async function promptConfirm(message: string): Promise<boolean> {
   const ans = await rl.question(message);
   rl.close();
   return ans.trim().toLowerCase() === "yes";
+}
+
+async function promptLine(message: string): Promise<string> {
+  const readline = await import("node:readline/promises");
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  const ans = await rl.question(message);
+  rl.close();
+  return ans.trim();
+}
+
+/**
+ * Decide whether this payment needs a human confirmation, and offer
+ * to enroll the wallet in autopay after the first confirmed mainnet
+ * payment.
+ *
+ * Ordering, least-surprising-first:
+ *   1. Testnet or --yes → no prompt.
+ *   2. --no-autopay → always prompt (defeats saved ceiling for one call).
+ *   3. Explicit --max-auto N → auto-pay if amount ≤ N, else prompt.
+ *      Does NOT touch the saved ceiling.
+ *   4. Saved autopay-ceiling-usd in secret file → auto-pay if amount ≤ it.
+ *   5. No ceiling → prompt. After user confirms, offer to save a
+ *      ceiling so future small payments are silent.
+ *
+ * Auto-pay always logs `[autopay] $X to G...` to stderr so there is a
+ * trail, even when silent.
+ */
+async function gateMainnetPayment(opts: {
+  amountUsd: number;
+  humanAmount: string;
+  args: CmdArgs;
+  secretFile: string;
+  network: "testnet" | "pubnet";
+}): Promise<void> {
+  const { amountUsd, humanAmount, args, secretFile, network } = opts;
+
+  if (network !== "pubnet") return;
+  if (args.yes) return;
+
+  if (!args.noAutopay) {
+    if (args.maxAutoUsd !== undefined) {
+      if (amountUsd <= args.maxAutoUsd) {
+        console.error(
+          `[autopay] $${humanAmount} USDC (≤ --max-auto $${args.maxAutoUsd.toFixed(2)})`,
+        );
+        return;
+      }
+    } else {
+      const savedCeiling = readAutopayCeiling(secretFile);
+      if (savedCeiling > 0 && amountUsd <= savedCeiling) {
+        console.error(
+          `[autopay] $${humanAmount} USDC (≤ saved ceiling $${savedCeiling.toFixed(2)})`,
+        );
+        return;
+      }
+    }
+  }
+
+  const ok = await promptConfirm(
+    `Pay $${humanAmount} USDC on mainnet? (yes/no) `,
+  );
+  if (!ok) {
+    console.error("Aborted.");
+    process.exit(0);
+  }
+
+  // Post-confirm enrollment: only offer if the user hasn't already
+  // picked a ceiling, hasn't overridden with --max-auto, and isn't
+  // forcing prompts via --no-autopay.
+  if (args.noAutopay) return;
+  if (args.maxAutoUsd !== undefined) return;
+  const existing = readAutopayCeiling(secretFile);
+  if (existing > 0) return;
+
+  console.error("");
+  console.error(
+    "💡 Tip: you can auto-approve small payments below a ceiling you choose.",
+  );
+  console.error(
+    "    Future calls ≤ the ceiling will be paid silently; larger ones still prompt.",
+  );
+  const ans = await promptLine(
+    "    Set an autopay ceiling (USD) now? [blank = skip, e.g. 0.10]: ",
+  );
+  if (!ans) return;
+  const ceiling = parseFloat(ans);
+  if (!Number.isFinite(ceiling) || ceiling <= 0) {
+    console.error("    Skipped (invalid amount).");
+    return;
+  }
+  try {
+    writeAutopayCeiling(secretFile, ceiling);
+    console.error(
+      `    ✅ Saved autopay ceiling $${ceiling.toFixed(2)} to ${secretFile}.`,
+    );
+    console.error(
+      `       Remove the '# autopay-ceiling-usd:' line in that file to revoke.`,
+    );
+  } catch (err) {
+    console.error(`    ⚠️  Could not write ceiling: ${(err as Error).message}`);
+  }
 }
 
 async function dumpResponse(res: Response, jsonMode: boolean) {
@@ -239,15 +357,13 @@ async function runPayFlow(inputs: RunInputs): Promise<void> {
   console.error("");
 
   const amountUsd = parseFloat(humanAmount);
-  if (signerConfig.network === "pubnet" && !args.yes && amountUsd > args.maxAutoUsd) {
-    const ok = await promptConfirm(
-      `Pay $${humanAmount} USDC on mainnet? (yes/no) `,
-    );
-    if (!ok) {
-      console.error("Aborted.");
-      process.exit(0);
-    }
-  }
+  await gateMainnetPayment({
+    amountUsd,
+    humanAmount,
+    args,
+    secretFile: inputs.base.secretFile,
+    network: signerConfig.network,
+  });
 
   const retryHeaders = await buildRetryHeaders({
     challenge,

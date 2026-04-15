@@ -115,7 +115,11 @@ If there is no `X-Job-Poll-Url` header, the 202 body is printed as-is.
 ## Safety
 
 - ✅ **Credentials are single-use** — if the first retry fails, the credential is burned. Don't blindly re-retry; start fresh.
-- ✅ **Mainnet payments above $0.10 require confirmation** — micropayments up to $0.10 are auto-approved (covers typical MPP Router API calls at $0.001–$0.01). Override with `--max-auto <usd>` or `--yes`.
+- ✅ **Every mainnet payment prompts by default.** No silent auto-pay out of the box. After you confirm the first payment, the script offers to save an autopay ceiling (e.g. $0.10) so future payments at or below that amount go through without a prompt. The ceiling is stored as a `# autopay-ceiling-usd:` comment inside the secret file itself, bound to the wallet. Delete the line to revoke.
+  - `--max-auto <usd>` — one-shot override for this call only; does not touch the saved ceiling.
+  - `--no-autopay` — force a prompt for this call even if a ceiling is saved.
+  - `--yes` — skip confirmation entirely (dangerous on mainnet; use only in trusted automation).
+  - Every auto-paid call still logs `[autopay] $X USDC ...` to stderr so there is a trail.
 - ✅ **Amount validation** — script verifies the 402 challenge amount matches the advertised service price (if known from catalog).
 - ❌ **Don't reuse a credential** — the HMAC binding to amount/currency/recipient is the router's defense against replay.
 
