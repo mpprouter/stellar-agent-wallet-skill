@@ -11,7 +11,7 @@ description: >
   api with stellar", or when the user shares a G... address with a payment intent.
 metadata:
   author: Shawn Yu
-  version: 1.3.0
+  version: 1.4.0
   license: MIT
   runtime: node
   homepage: https://www.mpprouter.dev/
@@ -168,8 +168,8 @@ On a fresh machine, work top-down. Each step reads the sub-skill's
 ## Example run
 
 ```bash
-# 0. One-time: install deps and generate a keypair
-pnpm add @stellar/stellar-sdk mppx tsx
+# 0. One-time: install deps (plugin ships without node_modules) + generate a keypair
+node prepare.mjs                          # populates node_modules from package-lock.json
 npx tsx scripts/generate-keypair.ts
 
 # 1. Onboard — are we ready to pay?
@@ -288,8 +288,9 @@ The skill is self-contained — no scaffold step, no shell env vars, just
 install deps and run commands directly.
 
 ```bash
-# 1. Install deps (one-time)
-pnpm add @stellar/stellar-sdk mppx tsx
+# 1. Install deps (one-time). The plugin ships a package.json and
+#    package-lock.json only; this script populates node_modules.
+node prepare.mjs
 
 # 2. Generate a keypair. This writes the secret straight to
 #    ./.stellar-secret with mode 600 — the secret is NEVER printed.

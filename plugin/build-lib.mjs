@@ -108,3 +108,14 @@ export function installDeps(dir, label = "build") {
     stdio: "inherit",
   });
 }
+
+/** Generate package-lock.json without populating node_modules.
+ *  Use this when the artifact should ship a lockfile for deterministic
+ *  first-run installs, but node_modules would make the zip too large. */
+export function writeLockfile(dir, label = "build") {
+  log(label, `Generating package-lock.json in ${dir} (no node_modules)`);
+  execSync("npm install --package-lock-only --omit=dev --no-audit --no-fund", {
+    cwd: dir,
+    stdio: "inherit",
+  });
+}

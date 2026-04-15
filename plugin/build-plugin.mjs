@@ -44,7 +44,7 @@ import {
   writeRendered,
   stampVersionInFile,
   substitutionsFrom,
-  installDeps,
+  writeLockfile,
   log,
 } from "./build-lib.mjs";
 
@@ -143,9 +143,22 @@ writeRendered(
 );
 log("plugin", `Wrote repo-root marketplace manifest: ${rootMarketplacePath}`);
 
-// 8. Install production dependencies so the plugin ships with node_modules.
-//    Without this, agents must run `npm install` after plugin installation,
-//    which fails when only pnpm-lock.yaml exists (npm ignores it).
-installDeps(outDir, "plugin");
+// 8. Copy the first-run dep installer to the plugin root.
+//    The plugin ships WITHOUT node_modules to keep the zip tiny (~80 KB
+//    vs ~37 MB). Users run `node prepare.mjs` once after install; it
+//    reads package.json + package-lock.json and populates node_modules.
+writeRendered(
+  join(outDir, "prepare.mjs"),
+  renderTemplate(
+    join(REPO_ROOT, "plugin", "prepare.mjs.tmpl"),
+    substitutions,
+  ),
+);
+
+// 9. Generate package-lock.json for deterministic first-run installs,
+//    but do NOT install node_modules into the plugin dir. This keeps
+//    the artifact small while still guaranteeing reproducible versions
+//    when `prepare.mjs` runs on the user's machine.
+writeLockfile(outDir, "plugin");
 
 log("plugin", "Done.");
