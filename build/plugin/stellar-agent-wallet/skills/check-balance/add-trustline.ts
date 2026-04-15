@@ -39,7 +39,13 @@ function resolveInputs(): RunInputs {
   return { base, secret };
 }
 
-async function runAddTrustline(inputs: RunInputs): Promise<void> {
+/**
+ * Add a USDC Classic trustline. Exported so callers (e.g. onboard)
+ * can invoke this in-process instead of spawning a child tsx call.
+ * The CLI entry point at the bottom of this file wraps the same
+ * function for direct `npx tsx add-trustline.ts` invocations.
+ */
+export async function runAddTrustline(inputs: RunInputs): Promise<void> {
   const { base, secret } = inputs;
   const passphrase =
     base.network === "pubnet" ? Networks.PUBLIC : Networks.TESTNET;
@@ -94,11 +100,15 @@ async function main() {
   await runAddTrustline(inputs);
 }
 
-main().catch((err) => {
-  if (err?.response?.data) {
-    console.error("Horizon error:", JSON.stringify(err.response.data, null, 2));
-  } else {
-    console.error(err);
-  }
-  process.exit(1);
-});
+// Run as CLI only when invoked directly (not when imported by
+// another skill such as onboard).
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((err) => {
+    if (err?.response?.data) {
+      console.error("Horizon error:", JSON.stringify(err.response.data, null, 2));
+    } else {
+      console.error(err);
+    }
+    process.exit(1);
+  });
+}

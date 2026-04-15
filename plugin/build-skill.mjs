@@ -63,19 +63,9 @@ writeRendered(
 //    but we keep the hook for future use).
 stampVersionInFile(join(outDir, "SKILL.md"), versionInfo.version);
 
-// 8. Copy the first-run dep installer to the skill root. The skill ships
-//    WITHOUT node_modules to keep the artifact small (~220 KB vs ~134 MB).
-//    Users run `node prepare.mjs` once after install.
-writeRendered(
-  join(outDir, "prepare.mjs"),
-  renderTemplate(
-    join(REPO_ROOT, "plugin", "prepare.mjs.tmpl"),
-    substitutions,
-  ),
-);
-
-// 9. Generate package-lock.json for deterministic first-run installs,
-//    but do NOT install node_modules. See build-plugin.mjs for rationale.
+// 8. Generate package-lock.json for deterministic first-run installs,
+//    but do NOT install node_modules. Users run
+//    `npm install --omit=dev` in the skill directory once after install.
 writeLockfile(outDir, "skill");
 
 log("skill", "Done.");

@@ -11,7 +11,7 @@ description: >
   api with stellar", or when the user shares a G... address with a payment intent.
 metadata:
   author: Shawn Yu
-  version: 1.6.0
+  version: 1.7.0
   license: MIT
   runtime: node
   homepage: https://www.mpprouter.dev/
@@ -178,7 +178,7 @@ On a fresh machine, work top-down. Each step reads the sub-skill's
 
 ```bash
 # 0. One-time: install deps (plugin ships without node_modules) + generate a keypair
-node prepare.mjs                          # populates node_modules from package-lock.json
+npm install --omit=dev                    # installs deps from shipped package-lock.json (one-time, ~30s)
 npx tsx scripts/generate-keypair.ts
 
 # 1. Onboard — are we ready to pay?
@@ -300,8 +300,9 @@ install deps and run commands directly.
 
 ```bash
 # 1. Install deps (one-time). The plugin ships a package.json and
-#    package-lock.json only; this script populates node_modules.
-node prepare.mjs
+#    package-lock.json only (no node_modules, to keep the artifact
+#    small). Run this in the plugin directory once after install.
+npm install --omit=dev
 
 # 2. Generate a keypair. This writes the secret straight to
 #    ./.stellar-secret with mode 600 — the secret is NEVER printed.

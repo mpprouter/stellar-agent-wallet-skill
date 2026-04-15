@@ -21,7 +21,6 @@
  * Base flags (secret file, network, etc.) via parseBase.
  */
 
-import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Keypair } from "@stellar/stellar-sdk";
@@ -32,6 +31,8 @@ import {
   type SecretSource,
 } from "../../scripts/src/secret.js";
 import { readBalances, totalUsdc } from "../../scripts/src/balance.js";
+import { runAddTrustline } from "../check-balance/add-trustline.js";
+import { runSwap, type SwapArgs } from "../check-balance/swap-xlm-to-usdc.js";
 
 const TRUSTLINE_RESERVE_XLM = 0.5;
 const TXN_CUSHION_XLM = 0.1; // room for tx fees and a swap round-trip
@@ -93,14 +94,6 @@ async function promptYes(msg: string): Promise<boolean> {
   return /^y(es)?$/i.test(ans.trim());
 }
 
-async function runScript(script: string, args: string[]): Promise<number> {
-  return new Promise((resolve) => {
-    const child = spawn("npx", ["tsx", script, ...args], {
-      stdio: "inherit",
-    });
-    child.on("exit", (code) => resolve(code ?? 1));
-  });
-}
 
 /**
  * Walk up from `startDir` looking for a `.git` directory. Returns the
@@ -302,7 +295,12 @@ function renderReport(report: Report): void {
   console.log("   This wallet's secret key controls real USDC. Treat it like a password.");
 }
 
-async function maybeAddTrustline(report: Report, args: CmdArgs): Promise<void> {
+async function maybeAddTrustline(
+  report: Report,
+  args: CmdArgs,
+  base: BaseConfig,
+  secret: string,
+): Promise<void> {
   if (report.hasTrustline) return;
   if (Number(report.xlmBalance) < 1 + TRUSTLINE_RESERVE_XLM) {
     console.error("⏸  Not enough XLM to add trustline. Top up first.");
@@ -317,37 +315,39 @@ async function maybeAddTrustline(report: Report, args: CmdArgs): Promise<void> {
     console.error("Skipped trustline.");
     return;
   }
-  const baseFlags = ["--network", report.network];
-  const exit = await runScript(
-    "skills/check-balance/add-trustline.ts",
-    baseFlags,
-  );
-  if (exit !== 0) {
-    console.error(`add-trustline exited with code ${exit}`);
-    process.exit(exit);
+  // In-process call — uses the exported runAddTrustline function
+  // so there's no subprocess, no extra startup cost, and nothing
+  // for a scanner to flag.
+  try {
+    await runAddTrustline({ base, secret });
+  } catch (err) {
+    console.error(`add-trustline failed: ${(err as Error).message}`);
+    process.exit(1);
   }
 }
 
-async function maybeSwap(report: Report, args: CmdArgs): Promise<void> {
+async function maybeSwap(
+  report: Report,
+  args: CmdArgs,
+  base: BaseConfig,
+  secret: string,
+): Promise<void> {
   if (args.swapXlm === undefined) return;
   if (!(args.swapXlm > 0)) {
     console.error("--swap <xlm> must be a positive number");
     process.exit(1);
   }
-  const swapArgs = [
-    "--xlm",
-    String(args.swapXlm),
-    "--network",
-    report.network,
-  ];
-  if (args.yes) swapArgs.push("--yes");
-  const exit = await runScript(
-    "skills/check-balance/swap-xlm-to-usdc.ts",
-    swapArgs,
-  );
-  if (exit !== 0) {
-    console.error(`swap-xlm-to-usdc exited with code ${exit}`);
-    process.exit(exit);
+  const swapArgs: SwapArgs = {
+    mode: "xlm",
+    amount: String(args.swapXlm),
+    slippage: 0.01,
+    yes: args.yes,
+  };
+  try {
+    await runSwap({ base, secret, args: swapArgs });
+  } catch (err) {
+    console.error(`swap-xlm-to-usdc failed: ${(err as Error).message}`);
+    process.exit(1);
   }
 }
 
@@ -404,8 +404,8 @@ async function main() {
     process.exit(2);
   }
 
-  await maybeAddTrustline(report, args);
-  await maybeSwap(report, args);
+  await maybeAddTrustline(report, args, base, secret);
+  await maybeSwap(report, args, base, secret);
 
   console.log("");
   console.log("Re-running diagnosis…");

@@ -40,7 +40,7 @@ const USDC_ISSUERS: Record<string, string> = {
 const LARGE_XLM_THRESHOLD = 50_000;
 const LARGE_USDC_THRESHOLD = 10_000;
 
-interface CmdArgs {
+export interface SwapArgs {
   mode: "xlm" | "usdc";
   amount: string;
   slippage: number;
@@ -50,10 +50,10 @@ interface CmdArgs {
 interface RunInputs {
   base: BaseConfig;
   secret: string;
-  args: CmdArgs;
+  args: SwapArgs;
 }
 
-function parseCmdArgs(rest: string[]): CmdArgs {
+function parseCmdArgs(rest: string[]): SwapArgs {
   let mode: "xlm" | "usdc" | null = null;
   let amount: string | null = null;
   let slippage = 0.01;
@@ -114,7 +114,13 @@ async function confirm(prompt: string): Promise<boolean> {
   return ans.trim().toLowerCase() === "yes";
 }
 
-async function runSwap(inputs: RunInputs): Promise<void> {
+/**
+ * Execute the XLM↔USDC swap. Exported so callers (e.g. onboard)
+ * can invoke this in-process instead of spawning a child tsx call.
+ * The CLI entry point at the bottom wraps this for direct
+ * `npx tsx swap-xlm-to-usdc.ts` invocations.
+ */
+export async function runSwap(inputs: RunInputs): Promise<void> {
   const { base, secret, args } = inputs;
   const passphrase =
     base.network === "pubnet" ? Networks.PUBLIC : Networks.TESTNET;
@@ -271,11 +277,15 @@ async function main() {
   await runSwap(inputs);
 }
 
-main().catch((err) => {
-  if (err?.response?.data) {
-    console.error("Horizon error:", JSON.stringify(err.response.data, null, 2));
-  } else {
-    console.error(err);
-  }
-  process.exit(1);
-});
+// Run as CLI only when invoked directly (not when imported by
+// another skill such as onboard).
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((err) => {
+    if (err?.response?.data) {
+      console.error("Horizon error:", JSON.stringify(err.response.data, null, 2));
+    } else {
+      console.error(err);
+    }
+    process.exit(1);
+  });
+}
