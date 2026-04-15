@@ -120,20 +120,26 @@ If there is no `X-Job-Poll-Url` header, the 202 body is printed as-is.
   - `--no-autopay` — force a prompt for this call even if a ceiling is saved.
   - `--yes` — skip confirmation entirely (dangerous on mainnet; use only in trusted automation).
   - Every auto-paid call still logs `[autopay] $X USDC ...` to stderr so there is a trail.
-- ✅ **Amount validation** — script verifies the 402 challenge amount matches the advertised service price (if known from catalog).
+- ✅ **Challenge validation (opt-in).** Pass `--expect-pay-to <G...>`, `--expect-amount <USDC>`, and/or `--expect-asset <SAC>` — typically piped from `discover --pick-one --json` via its `expect` block — and the script refuses to sign a 402 whose recipient, price, or asset drifts from the catalog. Without these flags, the server's challenge is trusted; a hostile 402 can set any recipient. Treat `--expect-*` as mandatory in production.
+  - `--expect-amount-tolerance <fraction>` — allow small drift (e.g. `0.01` = 1%) for services that quote ranges.
 - ❌ **Don't reuse a credential** — the HMAC binding to amount/currency/recipient is the router's defense against replay.
 
 ## Example: full MPP Router flow
 
 ```bash
-# Discover
+# Discover — capture the service + its catalog-asserted payment
+# expectations so pay-per-call can refuse a hostile 402.
 SERVICE=$(npx tsx skills/discover/run.ts --query "web search" --pick-one --json)
 URL="https://apiserver.mpprouter.dev$(echo "$SERVICE" | jq -r '.public_path')"
+EXPECT_AMT=$(echo "$SERVICE" | jq -r '.expect.amount_usdc // empty')
+EXPECT_TO=$(echo "$SERVICE" | jq -r '.expect.pay_to // empty')
 
 # Call
 npx tsx skills/pay-per-call/run.ts "$URL" \
   --body '{"query": "Summarize https://stripe.com/docs"}' \
-  --method POST
+  --method POST \
+  ${EXPECT_AMT:+--expect-amount "$EXPECT_AMT"} \
+  ${EXPECT_TO:+--expect-pay-to "$EXPECT_TO"}
 ```
 
 ## Env vars used

@@ -167,3 +167,73 @@ export async function buildRetryHeaders(params: {
 export function baseUnitsToUsdc(amount: string): string {
   return (Number(amount) / 10_000_000).toFixed(7);
 }
+
+export interface ChallengeExpectations {
+  /** Expected Stellar G... address the 402 will tell us to pay. */
+  payTo?: string;
+  /** Expected asset (Soroban SAC contract id, i.e. C... address). */
+  asset?: string;
+  /** Expected amount in USDC decimal units (e.g. "0.01"). */
+  amountUsdc?: string;
+  /** Tolerance for amount comparison, as a fraction. 0 = exact match. */
+  amountTolerance?: number;
+}
+
+/**
+ * Compare a parsed 402 challenge against caller-supplied expectations.
+ *
+ * When the caller knows ahead of time which service they intend to pay
+ * (e.g. a catalog entry from `discover --pick-one --json`), they can
+ * pass those fields here. Any mismatch returns a human-readable error
+ * string; the caller is expected to refuse to sign.
+ *
+ * This is the defense against a malicious or compromised 402-emitting
+ * server rewriting `payTo`, `asset`, or `amount` in its challenge
+ * response. Without this check the signer has no way to know the
+ * challenge is genuine.
+ *
+ * Returns null if every provided expectation matches, or a non-empty
+ * list of mismatch descriptions otherwise. Undefined expectations are
+ * skipped (opt-in per field).
+ */
+export function validateChallenge(
+  challenge: ParsedChallenge,
+  expected: ChallengeExpectations,
+): string[] | null {
+  const mismatches: string[] = [];
+
+  if (expected.payTo && expected.payTo !== challenge.payTo) {
+    mismatches.push(
+      `payTo mismatch: expected ${expected.payTo}, got ${challenge.payTo}`,
+    );
+  }
+
+  if (expected.asset && expected.asset !== challenge.asset) {
+    mismatches.push(
+      `asset mismatch: expected ${expected.asset}, got ${challenge.asset}`,
+    );
+  }
+
+  if (expected.amountUsdc !== undefined) {
+    const expectedUsdc = parseFloat(expected.amountUsdc);
+    const actualUsdc = parseFloat(baseUnitsToUsdc(challenge.amount));
+    if (!Number.isFinite(expectedUsdc) || expectedUsdc < 0) {
+      mismatches.push(
+        `amountUsdc expectation is invalid: ${expected.amountUsdc}`,
+      );
+    } else {
+      const tol = expected.amountTolerance ?? 0;
+      const delta = Math.abs(actualUsdc - expectedUsdc);
+      const allowed = expectedUsdc * tol;
+      if (delta > allowed) {
+        mismatches.push(
+          `amount mismatch: expected ${expectedUsdc.toFixed(7)} USDC` +
+            (tol > 0 ? ` (±${(tol * 100).toFixed(1)}%)` : "") +
+            `, got ${actualUsdc.toFixed(7)} USDC`,
+        );
+      }
+    }
+  }
+
+  return mismatches.length === 0 ? null : mismatches;
+}

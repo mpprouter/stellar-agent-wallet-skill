@@ -11,7 +11,7 @@ description: >
   api with stellar", or when the user shares a G... address with a payment intent.
 metadata:
   author: Shawn Yu
-  version: 1.5.0
+  version: 1.6.0
   license: MIT
   runtime: node
   homepage: https://www.mpprouter.dev/
@@ -69,13 +69,22 @@ metadata:
     "--asset-sac <address>":
       description: Stellar Asset Contract address for the payment token.
 
-  # Commands that move funds. Each prompts for confirmation above the
-  # threshold below (readline, unless --yes passed).
+  # Commands that move funds.
+  #
+  # - send-payment, bridge: ALWAYS prompt on mainnet (unless --yes).
+  #   No autopay.
+  # - pay-per-call: prompts on mainnet by default. After the first
+  #   confirmed payment, the user is offered to save an autopay
+  #   ceiling (`# autopay-ceiling-usd:` line in the secret file).
+  #   Payments at or below the ceiling are signed silently; larger
+  #   ones continue to prompt. See skills/pay-per-call/SKILL.md.
+  # - pay-per-call also accepts --expect-pay-to / --expect-amount /
+  #   --expect-asset so callers (typically piped from `discover --json`)
+  #   can verify the 402 challenge matches the catalog. Mismatch → abort.
   spending_commands:
     - pay-per-call
     - send-payment
     - bridge
-  spending_confirmation_threshold_usd: 0.1
 
   # Outbound endpoints this skill contacts.
   network_endpoints:
@@ -101,9 +110,9 @@ This skill is a **Stellar wallet**. It signs on-chain transactions using a priva
 
 **Never paste your secret into any UI or chat you do not fully control.** Keep it in the secret file only.
 
-**Mainnet spending commands require confirmation above $0.10.** `pay-per-call` auto-approves micropayments up to $0.10 (most MPP Router API calls are $0.001–$0.01). Payments above $0.10 prompt for confirmation. `send-payment` and `bridge` always prompt on mainnet. Override with `--yes` or `--max-auto <usd>`.
+**Every mainnet spend prompts by default.** `send-payment` and `bridge` always prompt (unless `--yes`). `pay-per-call` also prompts on the first mainnet call, then offers to save an **autopay ceiling** (e.g. $0.10) so that future payments at or below the ceiling are signed silently — larger ones keep prompting. The ceiling lives as a comment line inside the secret file (`# autopay-ceiling-usd: 0.10`) and is bound to that wallet. Delete the line to revoke. Every auto-paid call logs `[autopay] $X USDC ...` to stderr for audit.
 
-**`pay-per-call` will pay any URL you point it at.** Only use it against services you trust — a hostile 402 response can set the recipient to any address.
+**`pay-per-call` will pay any URL you point it at.** Pass `--expect-pay-to <G...>` and `--expect-amount <USDC>` (typically piped from `discover --pick-one --json`) so the script refuses to sign a 402 whose recipient or price drifts from the catalog. Without `--expect-*`, a compromised 402 server can redirect funds to any address.
 
 See `references/mainnet-checklist.md` before pointing this at real money.
 
@@ -252,7 +261,9 @@ The hard parts are already correct in `pay-per-call/run.ts`:
 - Auth-entry-only signing (not envelope signing)
 - `validUntilLedger` math
 - Single-use credential semantics
-- Confirmation gates above $1 on mainnet
+- Mainnet confirmation prompts with opt-in autopay ceiling
+- Optional `--expect-pay-to` / `--expect-amount` / `--expect-asset`
+  validation of the 402 challenge against catalog metadata
 
 ### Example flow
 

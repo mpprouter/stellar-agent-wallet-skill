@@ -17,6 +17,8 @@ import {
   parse402,
   buildRetryHeaders,
   baseUnitsToUsdc,
+  validateChallenge,
+  type ChallengeExpectations,
   type ParsedChallenge,
 } from "../../scripts/src/pay-engine.js";
 import type { SignerConfig } from "../../scripts/src/stellar-signer.js";
@@ -38,6 +40,11 @@ interface CmdArgs {
   receiptOut?: string;
   /** Force a prompt even if the autopay ceiling would allow auto-pay. */
   noAutopay: boolean;
+  /** Expected 402 challenge fields. Any mismatch aborts before signing. */
+  expectPayTo?: string;
+  expectAsset?: string;
+  expectAmountUsdc?: string;
+  expectAmountTolerance?: number;
 }
 
 function parseCmdArgs(rest: string[]): CmdArgs {
@@ -57,7 +64,17 @@ function parseCmdArgs(rest: string[]): CmdArgs {
       a.maxAutoUsd = v;
     } else if (k === "--no-autopay") a.noAutopay = true;
     else if (k === "--receipt-out") a.receiptOut = rest[++i];
-    else if (!k.startsWith("--") && !a.url) a.url = k;
+    else if (k === "--expect-pay-to") a.expectPayTo = rest[++i];
+    else if (k === "--expect-asset") a.expectAsset = rest[++i];
+    else if (k === "--expect-amount") a.expectAmountUsdc = rest[++i];
+    else if (k === "--expect-amount-tolerance") {
+      const v = parseFloat(rest[++i]);
+      if (!Number.isFinite(v) || v < 0 || v > 1) {
+        console.error("--expect-amount-tolerance must be between 0 and 1");
+        process.exit(1);
+      }
+      a.expectAmountTolerance = v;
+    } else if (!k.startsWith("--") && !a.url) a.url = k;
   }
   return a;
 }
@@ -355,6 +372,35 @@ async function runPayFlow(inputs: RunInputs): Promise<void> {
   console.error(`   To:     ${challenge.payTo}`);
   console.error(`   Asset:  ${challenge.asset}`);
   console.error("");
+
+  // Challenge validation. If the caller passed --expect-* flags (typically
+  // piped through from `discover --pick-one --json`), verify the 402
+  // response matches. Any mismatch means a server or intermediary is
+  // attempting to redirect funds, inflate the price, or swap the asset.
+  // Refuse to sign.
+  const expectations: ChallengeExpectations = {
+    payTo: args.expectPayTo,
+    asset: args.expectAsset,
+    amountUsdc: args.expectAmountUsdc,
+    amountTolerance: args.expectAmountTolerance,
+  };
+  const hasAnyExpectation =
+    expectations.payTo !== undefined ||
+    expectations.asset !== undefined ||
+    expectations.amountUsdc !== undefined;
+  if (hasAnyExpectation) {
+    const mismatches = validateChallenge(challenge, expectations);
+    if (mismatches) {
+      console.error("❌ Challenge does not match expected values:");
+      for (const m of mismatches) console.error(`   - ${m}`);
+      console.error("");
+      console.error("   Refusing to sign. The 402 server may be compromised,");
+      console.error("   the URL may be wrong, or the catalog is stale.");
+      process.exit(3);
+    }
+    console.error("✓ Challenge matches --expect-* values.");
+    console.error("");
+  }
 
   const amountUsd = parseFloat(humanAmount);
   await gateMainnetPayment({
