@@ -13,6 +13,8 @@
 
 import * as fs from "node:fs";
 import * as nodePath from "node:path";
+import { execFileSync } from "node:child_process";
+import * as os from "node:os";
 
 const REDACTED = "[REDACTED:signing-key]";
 
@@ -38,10 +40,12 @@ export type SecretEnvKey = (typeof SECRET_ENV_KEYS)[number];
 export interface SecretSource {
   /** Absolute path where the secret was found. */
   path: string;
-  /** "file" = one-secret-per-line file; "env" = dotenv-format KEY=VALUE. */
-  kind: "file" | "env";
+  /** "file" = one-secret-per-line file; "env" = dotenv-format KEY=VALUE; "identity" = Stellar CLI identity. */
+  kind: "file" | "env" | "identity";
   /** Which env key matched. Only set for kind === "env". */
   envKey?: SecretEnvKey;
+  /** Stellar CLI identity name. Only set for kind === "identity". */
+  identity?: string;
 }
 
 interface DotEnvHit {
@@ -87,6 +91,62 @@ function tryLoadFromEnvFile(envPath: string): DotEnvHit | undefined {
  */
 export function loadSecretFromFile(path: string): string {
   return loadSecretWithSource(path).secret;
+}
+
+export function loadSecretFromBase(base: {
+  secretFile: string;
+  identity?: string;
+}): string {
+  return loadSecretWithSourceFromBase(base).secret;
+}
+
+export function loadSecretWithSourceFromBase(base: {
+  secretFile: string;
+  identity?: string;
+}): { secret: string; source: SecretSource } {
+  if (base.identity) return loadSecretFromIdentity(base.identity);
+  return loadSecretWithSource(base.secretFile);
+}
+
+export function loadSecretFromIdentity(
+  identity: string,
+): { secret: string; source: SecretSource } {
+  let raw: string;
+  try {
+    raw = execFileSync("stellar", ["keys", "secret", identity], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (err: any) {
+    const detail = err?.stderr ? String(err.stderr).trim() : String(err);
+    throw new Error(
+      `Could not read Stellar CLI identity "${identity}". ` +
+        `Check it with: stellar keys public-key ${identity}` +
+        (detail ? `\n${detail}` : ""),
+    );
+  }
+
+  const line = raw
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .find((l) => l.length > 0 && !l.startsWith("#"));
+  if (!line || !STELLAR_SECRET_RE.test(line)) {
+    throw new Error(
+      `Stellar CLI identity "${identity}" did not return a valid Stellar secret key.`,
+    );
+  }
+
+  installRedactor(line);
+  const configHome =
+    process.env.XDG_CONFIG_HOME ?? nodePath.join(os.homedir(), ".config");
+  return {
+    secret: line,
+    source: {
+      path: nodePath.join(configHome, "stellar", "identity", `${identity}.toml`),
+      kind: "identity",
+      identity,
+    },
+  };
 }
 
 /**

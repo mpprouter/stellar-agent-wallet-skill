@@ -17,7 +17,7 @@
 
 import { Keypair } from "@stellar/stellar-sdk";
 import { parseBase, type BaseConfig } from "../../scripts/src/cli-config.js";
-import { loadSecretFromFile } from "../../scripts/src/secret.js";
+import { loadSecretFromBase } from "../../scripts/src/secret.js";
 import {
   readBalances,
   type BalanceReport,
@@ -36,7 +36,7 @@ function resolveInputs(): RunInputs {
 
   let pubkey = positional[0];
   if (!pubkey) {
-    const secret = loadSecretFromFile(base.secretFile);
+    const secret = loadSecretFromBase(base);
     pubkey = Keypair.fromSecret(secret).publicKey();
   }
 

@@ -16,8 +16,9 @@ File-based secret storage, sponsored mode, testnet and mainnet.
 
 This skill is a **wallet**. It signs Stellar transactions with a private
 key stored at `.stellar-secret` (mode 600, created by
-`scripts/generate-keypair.ts`). Use a dedicated hot wallet — never your
-main account. Default network is `pubnet` (mainnet); pass
+`scripts/generate-keypair.ts`) or in an existing Stellar CLI identity
+selected with `--identity <name>`. Use a dedicated hot wallet — never your
+main account. Wallet files are never overwritten by key generation. Default network is `pubnet` (mainnet); pass
 `--network testnet` while prototyping.
 
 See `SKILL.md` for the full security banner and `references/mainnet-checklist.md`

@@ -26,7 +26,7 @@ import * as path from "node:path";
 import { Keypair } from "@stellar/stellar-sdk";
 import { parseBase, type BaseConfig } from "../../scripts/src/cli-config.js";
 import {
-  loadSecretWithSource,
+  loadSecretWithSourceFromBase,
   PREFERRED_SECRET_ENV_KEY,
   type SecretSource,
 } from "../../scripts/src/secret.js";
@@ -355,7 +355,7 @@ async function main() {
   const { base, rest } = parseBase(process.argv.slice(2));
   const args = parseCmdArgs(rest);
 
-  const { secret, source } = loadSecretWithSource(base.secretFile);
+  const { secret, source } = loadSecretWithSourceFromBase(base);
   const pubkey = Keypair.fromSecret(secret).publicKey();
 
   const balance = await readBalances(base, pubkey);

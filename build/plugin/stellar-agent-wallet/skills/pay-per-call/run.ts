@@ -24,10 +24,12 @@ import {
 import type { SignerConfig } from "../../scripts/src/stellar-signer.js";
 import { parseBase, type BaseConfig } from "../../scripts/src/cli-config.js";
 import {
-  loadSecretFromFile,
+  loadSecretFromBase,
   readAutopayCeiling,
   writeAutopayCeiling,
 } from "../../scripts/src/secret.js";
+import { Keypair } from "@stellar/stellar-sdk";
+import { readBalances, totalUsdc } from "../../scripts/src/balance.js";
 
 interface CmdArgs {
   url?: string;
@@ -92,7 +94,7 @@ function resolveInputs(): RunInputs {
     console.error("Usage: pay-per-call.ts <url> [--method POST] [--body '{...}']");
     process.exit(1);
   }
-  const secret = loadSecretFromFile(base.secretFile);
+  const secret = loadSecretFromBase(base);
   const signerConfig: SignerConfig = {
     secret,
     network: base.network,
@@ -152,7 +154,11 @@ async function gateMainnetPayment(opts: {
   if (network !== "pubnet") return;
   if (args.yes) return;
 
-  if (!args.noAutopay) {
+  if (opts.secretFile === "" && args.maxAutoUsd === undefined) {
+    // Identity-backed wallets do not have a wallet-local secret file where
+    // the persistent autopay ceiling can be stored. Explicit --max-auto and
+    // --yes still work for automation.
+  } else if (!args.noAutopay) {
     if (args.maxAutoUsd !== undefined) {
       if (amountUsd <= args.maxAutoUsd) {
         console.error(
@@ -179,6 +185,7 @@ async function gateMainnetPayment(opts: {
     process.exit(0);
   }
 
+  if (!secretFile) return;
   // Post-confirm enrollment: only offer if the user hasn't already
   // picked a ceiling, hasn't overridden with --max-auto, and isn't
   // forcing prompts via --no-autopay.
@@ -214,6 +221,50 @@ async function gateMainnetPayment(opts: {
   } catch (err) {
     console.error(`    ⚠️  Could not write ceiling: ${(err as Error).message}`);
   }
+}
+
+async function preflightPayerReady(opts: {
+  base: BaseConfig;
+  signerConfig: SignerConfig;
+  challenge: ParsedChallenge;
+  amountUsd: number;
+}): Promise<void> {
+  const signerPubkey = Keypair.fromSecret(opts.signerConfig.secret).publicKey();
+  const report = await readBalances(
+    { ...opts.base, assetSac: opts.challenge.asset },
+    signerPubkey,
+  );
+  const problems: string[] = [];
+  if (!report.accountExists) {
+    problems.push(
+      `payer account ${signerPubkey} does not exist on ${opts.base.network}`,
+    );
+  }
+  if (report.accountExists && !report.hasClassicUsdcTrustline) {
+    problems.push("payer account is missing the Classic USDC trustline");
+  }
+  const usdc = totalUsdc(report);
+  if (report.accountExists && usdc < opts.amountUsd) {
+    problems.push(
+      `payer USDC balance ${usdc.toFixed(7)} is below required ${opts.amountUsd.toFixed(7)}`,
+    );
+  }
+  if (report.accountExists && Number(report.spendableXlm) < 0) {
+    problems.push(
+      `payer XLM balance is below reserve; spendable XLM is ${report.spendableXlm}`,
+    );
+  }
+  if (problems.length === 0) return;
+
+  console.error("❌ Payer wallet is not ready for this payment:");
+  for (const p of problems) console.error(`   - ${p}`);
+  console.error("");
+  console.error("Use an existing funded wallet with --identity <name> or --secret-file <path>.");
+  console.error("Check readiness with:");
+  console.error(
+    `   npx tsx skills/onboard/run.ts ${opts.base.identity ? `--identity ${opts.base.identity}` : `--secret-file ${opts.base.secretFile}`} --network ${opts.base.network}`,
+  );
+  process.exit(4);
 }
 
 async function dumpResponse(res: Response, jsonMode: boolean) {
@@ -403,11 +454,17 @@ async function runPayFlow(inputs: RunInputs): Promise<void> {
   }
 
   const amountUsd = parseFloat(humanAmount);
+  await preflightPayerReady({
+    base: inputs.base,
+    signerConfig,
+    challenge,
+    amountUsd,
+  });
   await gateMainnetPayment({
     amountUsd,
     humanAmount,
     args,
-    secretFile: inputs.base.secretFile,
+    secretFile: inputs.base.identity ? "" : inputs.base.secretFile,
     network: signerConfig.network,
   });
 

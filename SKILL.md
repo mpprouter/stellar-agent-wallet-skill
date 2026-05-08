@@ -33,12 +33,13 @@ metadata:
   # Secret handling.
   #
   # This skill signs Stellar transactions. It takes the signing key from
-  # a file on disk, NOT from shell environment variables. Use:
+  # a file on disk or an existing Stellar CLI identity. Use:
   #
   #   npx tsx scripts/generate-keypair.ts
   #
   # which writes a fresh secret to ./.stellar-secret with mode 600.
-  # Every command accepts --secret-file <path> (default: .stellar-secret).
+  # It refuses to overwrite existing wallet files. Every command accepts
+  # --secret-file <path> (default: .stellar-secret) or --identity <name>.
   #
   # Why file-based: environment variables leak into shell history and
   # ps(1) output. File-based secrets with mode 600 are the pattern used
@@ -48,14 +49,16 @@ metadata:
     default_path: .stellar-secret
     file_mode: "600"
     notes: >
-      Generated via scripts/generate-keypair.ts. Never printed to stdout.
-      loadSecretFromFile validates the Stellar strkey format before use.
+      Generated via scripts/generate-keypair.ts or loaded from Stellar CLI
+      identities. Never printed to stdout. Secrets are validated before use.
 
   # Configuration flags accepted by every command.
   cli_flags:
     "--secret-file <path>":
       description: Path to a file containing the Stellar secret key.
       default: .stellar-secret
+    "--identity <name>":
+      description: Existing Stellar CLI identity to use instead of --secret-file.
     "--network <name>":
       description: testnet or pubnet.
       default: pubnet
@@ -104,7 +107,7 @@ This skill is a **Stellar wallet**. It signs on-chain transactions using a priva
 
 **Use a dedicated hot wallet with a limited balance.** Never your main account.
 
-**Keys live in a file, not environment variables.** Run `npx tsx scripts/generate-keypair.ts` and it writes a fresh secret to `.stellar-secret` with mode 600. Every command takes `--secret-file <path>` (default `.stellar-secret`).
+**Keys live in a file or an existing Stellar CLI identity, not chat.** Run `npx tsx scripts/generate-keypair.ts` and it writes a fresh secret to `.stellar-secret` with mode 600, refusing to overwrite an existing file. Every command takes `--secret-file <path>` (default `.stellar-secret`) or `--identity <name>`.
 
 **Default network is `pubnet` (mainnet).** If you do not pass `--network testnet`, every transaction moves real USDC. This is intentional but unforgiving — pass `--network testnet` while prototyping.
 
@@ -118,14 +121,14 @@ See `references/mainnet-checklist.md` before pointing this at real money.
 
 ### Secret handling guarantees
 
-The signing key is loaded from `.stellar-secret` (mode 600) by `scripts/src/secret.ts` and passed as a function argument to `scripts/src/stellar-signer.ts`. The secret is:
+The signing key is loaded from `.stellar-secret` (mode 600) or a Stellar CLI identity by `scripts/src/secret.ts` and passed as a function argument to `scripts/src/stellar-signer.ts`. The secret is:
 
 - **Never printed** to stdout, stderr, or logs
 - **Never included** in HTTP headers, request bodies, or URLs
 - **Never returned** from any function — only the derived public key and signed XDR are returned
 - **Scoped to a single function call** — the `Keypair` object goes out of scope when `signSacTransfer()` returns
 
-The skill does not read environment variables for secrets. It does not use `process.env` for key material. All secret access goes through `loadSecretFromFile()` in `scripts/src/secret.ts`, which validates the Stellar strkey format before returning.
+Secret access goes through `scripts/src/secret.ts`, which validates the Stellar strkey format before returning. `STELLAR_IDENTITY` may select an existing Stellar CLI identity when `--secret-file` is not supplied; it does not carry key material.
 
 ### Network endpoints contacted
 
@@ -304,8 +307,9 @@ install deps and run commands directly.
 #    small). Run this in the plugin directory once after install.
 npm install --omit=dev
 
-# 2. Generate a keypair. This writes the secret straight to
-#    ./.stellar-secret with mode 600 — the secret is NEVER printed.
+# 2. Generate a keypair only if you do not already have a wallet.
+#    This writes ./.stellar-secret with mode 600, never prints the secret,
+#    and refuses to overwrite an existing wallet file.
 npx tsx scripts/generate-keypair.ts
 
 # 3. Check your balance:
@@ -316,6 +320,7 @@ Every command accepts the same base flags:
 
 ```
 --secret-file <path>    Stellar secret file (default: .stellar-secret)
+--identity <name>       Stellar CLI identity to use instead of --secret-file
 --network <name>        testnet | pubnet (default: pubnet)
 --horizon-url <url>     override Horizon endpoint
 --rpc-url <url>         override Soroban RPC endpoint

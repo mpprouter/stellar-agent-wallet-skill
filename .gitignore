@@ -2,7 +2,7 @@
 .env
 .env.local
 .env.*.local
-.stellar-secret
+.stellar-secret*
 *.stellar-secret
 stellar.key
 *.key

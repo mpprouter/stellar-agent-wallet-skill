@@ -4,7 +4,8 @@
  * Usage:
  *   npx tsx scripts/generate-keypair.ts                   # write to ./.stellar-secret
  *   npx tsx scripts/generate-keypair.ts --out wallet.key  # custom path
- *   npx tsx scripts/generate-keypair.ts --force           # overwrite existing
+ * Existing wallet files are never overwritten. Pick a new --out path if
+ * you need another wallet.
  *
  * The generated secret is NEVER printed to the terminal. It is written
  * directly to a file with mode 600 so it can only be read by the current
@@ -23,21 +24,24 @@ const DEFAULT_OUT = ".stellar-secret";
 function parseArgs() {
   const argv = process.argv.slice(2);
   let out = DEFAULT_OUT;
-  let force = false;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--out") out = argv[++i];
-    else if (argv[i] === "--force" || argv[i] === "-f") force = true;
+    else if (argv[i] === "--force" || argv[i] === "-f") {
+      console.error("❌ --force is disabled. Wallet files are never overwritten.");
+      console.error("   Use --out <new-file> to create a separate wallet.");
+      process.exit(1);
+    }
   }
-  return { out, force };
+  return { out };
 }
 
 function main() {
-  const { out, force } = parseArgs();
+  const { out } = parseArgs();
   const outPath = path.resolve(process.cwd(), out);
 
-  if (fs.existsSync(outPath) && !force) {
+  if (fs.existsSync(outPath)) {
     console.error(
-      `❌ ${out} already exists. Refusing to overwrite without --force.`,
+      `❌ ${out} already exists. Refusing to overwrite an existing wallet.`,
     );
     console.error(`   If you want a fresh keypair in a different file:`);
     console.error(`     npx tsx scripts/generate-keypair.ts --out stellar.key`);

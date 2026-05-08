@@ -14,7 +14,7 @@ not, prints the exact command to fix each gap.
 - User says: "onboard", "set up wallet", "am I ready", "first time",
   "get started", "check my wallet".
 - **Proactively, before the first pay-per-call.** If the user has never
-  paid and there's no `.stellar-secret` / USDC in sight, run onboard
+  paid and there's no selected wallet / USDC in sight, run onboard
   rather than letting pay-per-call fail mid-flow.
 
 ## Not for
@@ -28,8 +28,9 @@ not, prints the exact command to fix each gap.
 
 Run in order; the first failure is the one the user should fix first.
 
-1. **Secret resolvable.** Reads from `--secret-file` (default
-   `.stellar-secret`), falling back to `.env.prod` then `.env`. Only
+1. **Secret resolvable.** Reads from `--identity <name>` or `--secret-file`
+   (default `.stellar-secret`), falling back to `.env.prod` then `.env` only
+   when a secret file is missing. Only
    recognises these env keys, all validated against the Stellar strkey
    format `S[A-Z0-9]{55}`:
    - `STELLAR_SECRET` (preferred)
@@ -73,7 +74,7 @@ npx tsx skills/onboard/run.ts --json
 npx tsx skills/onboard/run.ts --setup --i-know
 ```
 
-Base flags (`--secret-file`, `--network`, `--horizon-url`, `--rpc-url`,
+Base flags (`--identity`, `--secret-file`, `--network`, `--horizon-url`, `--rpc-url`,
 `--asset-sac`) behave like every other skill — see `scripts/src/cli-config.ts`.
 
 ## Safety
@@ -85,6 +86,8 @@ Base flags (`--secret-file`, `--network`, `--horizon-url`, `--rpc-url`,
 - 🔐 **Secret files are never overwritten.** If one exists, onboard
   reads it. If only an env file has the value under a legacy key name,
   onboard loads it and suggests a rename — it does not rewrite the file.
+  Existing Stellar CLI identities are selected with `--identity <name>` and
+  are never modified by onboard.
 - 💸 **Swapping is opt-in.** `--swap N` is the only path to a swap.
   Onboard never guesses a swap amount.
 - 💸 **Mainnet swap prompts.** `swap-xlm-to-usdc.ts` has its own

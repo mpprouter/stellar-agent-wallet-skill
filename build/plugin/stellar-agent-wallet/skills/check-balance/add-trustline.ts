@@ -21,7 +21,7 @@ import {
   BASE_FEE,
 } from "@stellar/stellar-sdk";
 import { parseBase, type BaseConfig } from "../../scripts/src/cli-config.js";
-import { loadSecretFromFile } from "../../scripts/src/secret.js";
+import { loadSecretFromBase } from "../../scripts/src/secret.js";
 
 const USDC_ISSUERS: Record<string, string> = {
   testnet: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
@@ -35,7 +35,7 @@ interface RunInputs {
 
 function resolveInputs(): RunInputs {
   const { base } = parseBase(process.argv.slice(2));
-  const secret = loadSecretFromFile(base.secretFile);
+  const secret = loadSecretFromBase(base);
   return { base, secret };
 }
 

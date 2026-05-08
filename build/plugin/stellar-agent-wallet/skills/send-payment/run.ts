@@ -22,7 +22,7 @@ import * as readline from "node:readline/promises";
 import { createPayment } from "../../scripts/src/rozo-client.js";
 import type { RozoCreateRequest } from "../../scripts/src/rozo-client.js";
 import { parseBase, type BaseConfig } from "../../scripts/src/cli-config.js";
-import { loadSecretFromFile } from "../../scripts/src/secret.js";
+import { loadSecretFromBase } from "../../scripts/src/secret.js";
 
 const CHAIN_IDS: Record<string, number> = {
   ethereum: 1,
@@ -153,7 +153,7 @@ function resolveInputs(externalArgs?: CmdArgs): RunInputs {
     );
     process.exit(1);
   }
-  const secret = loadSecretFromFile(base.secretFile);
+  const secret = loadSecretFromBase(base);
   return { base, secret, args };
 }
 

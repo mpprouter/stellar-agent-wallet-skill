@@ -134,6 +134,7 @@ Request body is fixed to `appId: "rozoAgent"`. `type: "exactOut"` means the reci
 Pass on the command line (no env vars, no .env files):
 
 ```
+--identity <name>          existing Stellar CLI identity to use for signing
 --secret-file <path>       path to Stellar secret file (default: .stellar-secret)
 --network <pubnet>         required: must be pubnet; testnet errors out
 --horizon-url <url>        optional Horizon override (default: https://horizon.stellar.org)

@@ -50,8 +50,11 @@ npx tsx skills/check-balance/run.ts
 ### check balance
 
 ```bash
-# Derive pubkey from --secret-file (default: .stellar-secret)
+# Derive pubkey from --identity or --secret-file (default: .stellar-secret)
 npx tsx skills/check-balance/run.ts
+
+# Use an existing Stellar CLI identity
+npx tsx skills/check-balance/run.ts --identity mpp-mainnet-payer
 
 # Check any pubkey
 npx tsx skills/check-balance/run.ts GABCD...
@@ -125,6 +128,6 @@ npx tsx skills/check-balance/swap-xlm-to-usdc.ts --xlm 10 --yes
 
 ## Prerequisites
 
-- `.stellar-secret` file (or `--secret-file <path>`) containing the signing key. All other config via CLI flags: `--network`, `--horizon-url`, `--rpc-url`, `--asset-sac`.
+- `.stellar-secret` file, `--secret-file <path>`, or an existing Stellar CLI identity selected with `--identity <name>`. All other config via CLI flags: `--network`, `--horizon-url`, `--rpc-url`, `--asset-sac`.
 - For mainnet, read `references/mainnet-checklist.md`.
 - Account must already exist on-chain (funded with ≥ 1 XLM on pubnet, or Friendbot on testnet).

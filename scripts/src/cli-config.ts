@@ -1,13 +1,14 @@
 /**
  * Shared command-line flag parser for every command in this skill.
  *
- * Every command takes the same base flags (secret file path, network
+ * Every command takes the same base flags (secret file path or Stellar CLI
+ * identity, network
  * selection, RPC/Horizon overrides, asset SAC). Individual commands
  * layer their own flags on top by calling parseBase() then parsing
  * the rest of argv themselves.
  *
- * This module reads only process.argv. It does not read any other
- * external state.
+ * This module reads process.argv plus STELLAR_IDENTITY as a convenience
+ * fallback when no explicit --secret-file is supplied.
  */
 
 const DEFAULT_SECRET_FILE = ".stellar-secret";
@@ -19,6 +20,7 @@ const DEFAULT_RPC_TESTNET = "https://soroban-testnet.stellar.org";
 
 export interface BaseConfig {
   secretFile: string;
+  identity?: string;
   network: "testnet" | "pubnet";
   horizonUrl: string;
   rpcUrl: string;
@@ -35,6 +37,8 @@ export function parseBase(argv: string[]): {
   rest: string[];
 } {
   let secretFile = DEFAULT_SECRET_FILE;
+  let secretFileExplicit = false;
+  let identity: string | undefined;
   let network: "testnet" | "pubnet" = DEFAULT_NETWORK;
   let horizonOverride: string | undefined;
   let rpcOverride: string | undefined;
@@ -45,6 +49,9 @@ export function parseBase(argv: string[]): {
     const a = argv[i];
     if (a === "--secret-file") {
       secretFile = argv[++i];
+      secretFileExplicit = true;
+    } else if (a === "--identity") {
+      identity = argv[++i];
     } else if (a === "--network") {
       const v = argv[++i];
       if (v !== "testnet" && v !== "pubnet") {
@@ -62,6 +69,13 @@ export function parseBase(argv: string[]): {
     }
   }
 
+  if (!identity && !secretFileExplicit && process.env.STELLAR_IDENTITY) {
+    identity = process.env.STELLAR_IDENTITY;
+  }
+  if (identity && secretFileExplicit) {
+    throw new Error("--identity and --secret-file are mutually exclusive");
+  }
+
   const horizonUrl =
     horizonOverride ??
     (network === "pubnet" ? DEFAULT_HORIZON_PUBNET : DEFAULT_HORIZON_TESTNET);
@@ -70,7 +84,7 @@ export function parseBase(argv: string[]): {
     (network === "pubnet" ? DEFAULT_RPC_PUBNET : DEFAULT_RPC_TESTNET);
 
   return {
-    base: { secretFile, network, horizonUrl, rpcUrl, assetSac },
+    base: { secretFile, identity, network, horizonUrl, rpcUrl, assetSac },
     rest,
   };
 }
@@ -80,6 +94,7 @@ export function baseFlagsHelp(): string {
   return [
     "Common flags (all commands):",
     `  --secret-file <path>    Stellar secret file (default: ${DEFAULT_SECRET_FILE})`,
+    "  --identity <name>       Stellar CLI identity to use instead of --secret-file",
     `  --network <name>        testnet | pubnet (default: ${DEFAULT_NETWORK})`,
     `  --horizon-url <url>     Override Horizon endpoint`,
     `  --rpc-url <url>         Override Soroban RPC endpoint`,

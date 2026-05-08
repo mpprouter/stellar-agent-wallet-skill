@@ -58,6 +58,11 @@ but the right move is to read the catalog up front.
 5. Re-POST/GET with the payment header attached.
 6. Return the response body + any `Payment-Receipt` header for auditing.
 
+Before signing, the script checks that the selected payer wallet exists on
+the target Stellar network, has a Classic USDC trustline, has enough USDC for
+the challenge amount, and is not below XLM reserve. This catches wrong-wallet
+failures before any payment credential is signed.
+
 ### Dialect priority — when a server emits multiple
 
 MPP Router is the canonical example: a single 402 response includes
@@ -81,7 +86,8 @@ doesn't expose a dialect override.
 npx tsx skills/pay-per-call/run.ts \
   "https://apiserver.mpprouter.dev/v1/services/parallel/search" \
   --body '{"query": "Summarize https://stripe.com/docs"}' \
-  --method POST
+  --method POST \
+  --identity mpp-mainnet-payer
 
 # x402 facilitator
 npx tsx skills/pay-per-call/run.ts https://some-x402-api.example/endpoint
@@ -144,5 +150,5 @@ npx tsx skills/pay-per-call/run.ts "$URL" \
 
 ## Env vars used
 
-- `--secret-file`, `--network`, `--rpc-url` — for signing
+- `--identity` or `--secret-file`, plus `--network`, `--rpc-url` — for signing
 - `--asset-sac <address>` — default asset if challenge doesn't specify one
