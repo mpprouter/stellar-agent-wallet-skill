@@ -23,11 +23,7 @@ import {
 } from "../../scripts/src/pay-engine.js";
 import type { SignerConfig } from "../../scripts/src/stellar-signer.js";
 import { parseBase, type BaseConfig } from "../../scripts/src/cli-config.js";
-import {
-  loadSecretFromBase,
-  readAutopayCeiling,
-  writeAutopayCeiling,
-} from "../../scripts/src/secret.js";
+import { loadSecretFromBase } from "../../scripts/src/secret.js";
 import { Keypair } from "@stellar/stellar-sdk";
 import { readBalances, totalUsdc } from "../../scripts/src/balance.js";
 
@@ -37,11 +33,9 @@ interface CmdArgs {
   body?: string;
   json: boolean;
   yes: boolean;
-  /** Explicit per-invocation ceiling. undefined → use ceiling from secret file. */
+  /** Session-only autopay ceiling. Payments ≤ this amount are signed without prompting. Not persisted. */
   maxAutoUsd?: number;
   receiptOut?: string;
-  /** Force a prompt even if the autopay ceiling would allow auto-pay. */
-  noAutopay: boolean;
   /** Expected 402 challenge fields. Any mismatch aborts before signing. */
   expectPayTo?: string;
   expectAsset?: string;
@@ -50,7 +44,7 @@ interface CmdArgs {
 }
 
 function parseCmdArgs(rest: string[]): CmdArgs {
-  const a: CmdArgs = { method: "GET", json: false, yes: false, noAutopay: false };
+  const a: CmdArgs = { method: "GET", json: false, yes: false };
   for (let i = 0; i < rest.length; i++) {
     const k = rest[i];
     if (k === "--method") a.method = rest[++i];
@@ -64,8 +58,7 @@ function parseCmdArgs(rest: string[]): CmdArgs {
         process.exit(1);
       }
       a.maxAutoUsd = v;
-    } else if (k === "--no-autopay") a.noAutopay = true;
-    else if (k === "--receipt-out") a.receiptOut = rest[++i];
+    } else if (k === "--receipt-out") a.receiptOut = rest[++i];
     else if (k === "--expect-pay-to") a.expectPayTo = rest[++i];
     else if (k === "--expect-asset") a.expectAsset = rest[++i];
     else if (k === "--expect-amount") a.expectAmountUsdc = rest[++i];
@@ -152,34 +145,19 @@ async function gateMainnetPayment(opts: {
   amountUsd: number;
   humanAmount: string;
   args: CmdArgs;
-  secretFile: string;
   network: "testnet" | "pubnet";
 }): Promise<void> {
-  const { amountUsd, humanAmount, args, secretFile, network } = opts;
+  const { amountUsd, humanAmount, args, network } = opts;
 
   if (network !== "pubnet") return;
   if (args.yes) return;
 
-  if (opts.secretFile === "" && args.maxAutoUsd === undefined) {
-    // Identity-backed wallets do not have a wallet-local secret file where
-    // the persistent autopay ceiling can be stored. Explicit --max-auto and
-    // --yes still work for automation.
-  } else if (!args.noAutopay) {
-    if (args.maxAutoUsd !== undefined) {
-      if (amountUsd <= args.maxAutoUsd) {
-        console.error(
-          `[autopay] $${humanAmount} USDC (≤ --max-auto $${args.maxAutoUsd.toFixed(2)})`,
-        );
-        return;
-      }
-    } else {
-      const savedCeiling = readAutopayCeiling(secretFile);
-      if (savedCeiling > 0 && amountUsd <= savedCeiling) {
-        console.error(
-          `[autopay] $${humanAmount} USDC (≤ saved ceiling $${savedCeiling.toFixed(2)})`,
-        );
-        return;
-      }
+  if (args.maxAutoUsd !== undefined) {
+    if (amountUsd <= args.maxAutoUsd) {
+      console.error(
+        `[autopay] $${humanAmount} USDC (≤ --max-auto $${args.maxAutoUsd.toFixed(2)})`,
+      );
+      return;
     }
   }
 
@@ -189,50 +167,6 @@ async function gateMainnetPayment(opts: {
   if (!ok) {
     console.error("Aborted.");
     process.exit(0);
-  }
-
-  if (!secretFile) return;
-  // Post-confirm enrollment: only offer if the user hasn't already
-  // picked a ceiling, hasn't overridden with --max-auto, and isn't
-  // forcing prompts via --no-autopay.
-  if (args.noAutopay) return;
-  if (args.maxAutoUsd !== undefined) return;
-  const existing = readAutopayCeiling(secretFile);
-  if (existing > 0) return;
-
-  console.error("");
-  console.error(
-    "💡 Optional: you can auto-approve future payments below a ceiling you choose.",
-  );
-  console.error(
-    "   ⚠️  Risk: any 402 endpoint at or below the ceiling will be paid silently —",
-  );
-  console.error(
-    "       including misconfigured or malicious ones. Only set a ceiling if you",
-  );
-  console.error(
-    "       trust the endpoints you call and always pass --expect-pay-to/--expect-amount.",
-  );
-  console.error(
-    "   Larger payments will still prompt. Remove '# autopay-ceiling-usd:' from",
-  );
-  console.error(`   ${secretFile} at any time to revoke.`);
-  const ans = await promptLine(
-    "   Set a ceiling (USD)? [blank = skip, recommended; e.g. 0.05]: ",
-  );
-  if (!ans) return;
-  const ceiling = parseFloat(ans);
-  if (!Number.isFinite(ceiling) || ceiling <= 0) {
-    console.error("   Skipped (invalid amount).");
-    return;
-  }
-  try {
-    writeAutopayCeiling(secretFile, ceiling);
-    console.error(
-      `   ✅ Saved autopay ceiling $${ceiling.toFixed(2)} to ${secretFile}.`,
-    );
-  } catch (err) {
-    console.error(`   ⚠️  Could not write ceiling: ${(err as Error).message}`);
   }
 }
 
@@ -521,17 +455,6 @@ function printStartupWarnings(inputs: RunInputs): void {
   if (base.network === "pubnet" && !args.yes) {
     console.error("⚠️  MAINNET: real USDC will move. Pass --network testnet to prototype.");
   }
-  if (!args.noAutopay && args.maxAutoUsd === undefined && base.secretFile) {
-    const ceiling = readAutopayCeiling(base.secretFile);
-    if (ceiling > 0) {
-      console.error(
-        `ℹ️  Autopay ceiling active: $${ceiling.toFixed(2)} USDC (payments ≤ this amount are signed silently).`,
-      );
-      console.error(
-        `   Remove '# autopay-ceiling-usd:' from ${base.secretFile} to revoke.`,
-      );
-    }
-  }
 }
 
 async function runPayFlow(inputs: RunInputs): Promise<void> {
@@ -620,7 +543,6 @@ async function runPayFlow(inputs: RunInputs): Promise<void> {
     amountUsd,
     humanAmount,
     args,
-    secretFile: inputs.base.identity ? "" : inputs.base.secretFile,
     network: signerConfig.network,
   });
 

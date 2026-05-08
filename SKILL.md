@@ -75,13 +75,9 @@ metadata:
   # Commands that move funds.
   #
   # - send-payment, bridge: ALWAYS prompt on mainnet (unless --yes).
-  #   No autopay.
-  # - pay-per-call: prompts on mainnet before every payment by default.
-  #   An optional autopay ceiling exists but is NOT recommended — it
-  #   silently signs any qualifying 402 challenge, including malformed
-  #   or malicious ones. If used at all, keep it very low and always
-  #   pass --expect-pay-to / --expect-amount to validate the recipient.
-  #   See skills/pay-per-call/SKILL.md.
+  # - pay-per-call: prompts before every mainnet payment. No persistent
+  #   autopay — every payment requires explicit confirmation unless
+  #   --max-auto is passed for session-only automation.
   # - Always pass --expect-pay-to / --expect-amount / --expect-asset
   #   (typically piped from `discover --json`) to verify the 402
   #   challenge matches the catalog. Mismatch → abort before signing.
@@ -114,9 +110,9 @@ This skill is a **Stellar wallet**. It signs on-chain transactions using a priva
 
 **Never paste your secret into any UI or chat you do not fully control.** Keep it in the secret file only.
 
-**Every mainnet spend prompts before signing — do not bypass this.** `send-payment` and `bridge` always prompt (unless `--yes`, which should never be used on mainnet without independently verifying the transaction). `pay-per-call` prompts before every mainnet payment by default.
+**Every mainnet spend prompts before signing — do not bypass this.** `send-payment` and `bridge` always prompt (unless `--yes`, which should never be used on mainnet without independently verifying the transaction). `pay-per-call` prompts before every mainnet payment with no persistent autopay — confirmation is required for every call.
 
-**Do not enable the autopay ceiling.** After the first confirmed payment, the script offers an optional autopay ceiling that silently signs future payments at or below the limit. This is a convenience feature that removes a safety check — any 402 endpoint, including a misconfigured or malicious one, will be paid without prompting if the amount is within the ceiling. Skip it (press Enter) unless you have a specific, well-understood use case. If you do use it, keep it extremely low (e.g. $0.01) and always pass `--expect-pay-to`/`--expect-amount`. Remove the `# autopay-ceiling-usd:` line from the secret file to revoke.
+**Session-only automation with `--max-auto`:** For scripted pipelines, pass `--max-auto <USD>` to skip the prompt for payments at or below that amount within the current process only. This setting is never saved to disk and expires when the process exits. Always combine with `--expect-pay-to`/`--expect-amount` to validate the recipient and amount before signing.
 
 **`pay-per-call` will pay any URL you point it at — always pass `--expect-pay-to <G...>` and `--expect-amount <USDC>`.** These flags make the script refuse to sign a 402 whose recipient or price drifts from what you expect. Without them, a compromised or misconfigured 402 server can redirect funds to any address. Omitting both flags is only appropriate in a fully-controlled test environment.
 
@@ -270,6 +266,7 @@ The hard parts are already correct in `pay-per-call/run.ts`:
 - Mainnet confirmation prompts with opt-in autopay ceiling
 - **Strongly recommended** `--expect-pay-to` / `--expect-amount` / `--expect-asset`
   validation of the 402 challenge against catalog metadata (omit only in controlled test environments)
+- No persistent autopay — every mainnet payment requires confirmation; use `--max-auto` for session-only automation
 
 ### Example flow
 
