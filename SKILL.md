@@ -105,7 +105,7 @@ metadata:
 
 This skill is a **Stellar wallet**. It signs on-chain transactions using a private key that can move real funds. Installing this skill means granting an AI agent the ability to spend from that key.
 
-**Use a dedicated hot wallet with a limited balance.** Never your main account.
+**Use a dedicated hot wallet with a limited balance — never your main account.** Create a fresh keypair with `npx tsx scripts/generate-keypair.ts`, fund it with only what you need for the session, and treat the balance as expendable. If the key is ever compromised, the blast radius is limited to that wallet.
 
 **Keys live in a file or an existing Stellar CLI identity, not chat.** Run `npx tsx scripts/generate-keypair.ts` and it writes a fresh secret to `.stellar-secret` with mode 600, refusing to overwrite an existing file. Every command takes `--secret-file <path>` (default `.stellar-secret`) or `--identity <name>`.
 
@@ -115,7 +115,7 @@ This skill is a **Stellar wallet**. It signs on-chain transactions using a priva
 
 **Every mainnet spend prompts by default.** `send-payment` and `bridge` always prompt (unless `--yes`). `pay-per-call` also prompts on the first mainnet call, then offers to save an **autopay ceiling** (e.g. $0.10) so that future payments at or below the ceiling are signed silently — larger ones keep prompting. The ceiling lives as a comment line inside the secret file (`# autopay-ceiling-usd: 0.10`) and is bound to that wallet. Delete the line to revoke. Every auto-paid call logs `[autopay] $X USDC ...` to stderr for audit.
 
-**`pay-per-call` will pay any URL you point it at.** Pass `--expect-pay-to <G...>` and `--expect-amount <USDC>` (typically piped from `discover --pick-one --json`) so the script refuses to sign a 402 whose recipient or price drifts from the catalog. Without `--expect-*`, a compromised 402 server can redirect funds to any address.
+**`pay-per-call` will pay any URL you point it at — always pass `--expect-pay-to <G...>` and `--expect-amount <USDC>`.** These flags make the script refuse to sign a 402 whose recipient or price drifts from what you expect. Without them, a compromised or misconfigured 402 server can redirect funds to any address. Omitting both flags is only appropriate in a fully-controlled test environment.
 
 See `references/mainnet-checklist.md` before pointing this at real money.
 
@@ -265,8 +265,8 @@ The hard parts are already correct in `pay-per-call/run.ts`:
 - `validUntilLedger` math
 - Single-use credential semantics
 - Mainnet confirmation prompts with opt-in autopay ceiling
-- Optional `--expect-pay-to` / `--expect-amount` / `--expect-asset`
-  validation of the 402 challenge against catalog metadata
+- **Strongly recommended** `--expect-pay-to` / `--expect-amount` / `--expect-asset`
+  validation of the 402 challenge against catalog metadata (omit only in controlled test environments)
 
 ### Example flow
 

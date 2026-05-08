@@ -509,8 +509,27 @@ async function detectMethodMismatch(
   return null;
 }
 
+function printStartupWarnings(inputs: RunInputs): void {
+  const { base, args } = inputs;
+  if (base.network === "pubnet" && !args.yes) {
+    console.error("⚠️  MAINNET: real USDC will move. Pass --network testnet to prototype.");
+  }
+  if (!args.noAutopay && args.maxAutoUsd === undefined && base.secretFile) {
+    const ceiling = readAutopayCeiling(base.secretFile);
+    if (ceiling > 0) {
+      console.error(
+        `ℹ️  Autopay ceiling active: $${ceiling.toFixed(2)} USDC (payments ≤ this amount are signed silently).`,
+      );
+      console.error(
+        `   Remove '# autopay-ceiling-usd:' from ${base.secretFile} to revoke.`,
+      );
+    }
+  }
+}
+
 async function runPayFlow(inputs: RunInputs): Promise<void> {
   const { args, signerConfig } = inputs;
+  printStartupWarnings(inputs);
   if (isMpprouterPayInvoice(args.url!) && args.method.toUpperCase() === "POST") {
     const normalized = normalizeInvoicePayload(args.body);
     if (normalized.changed) {
