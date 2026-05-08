@@ -202,30 +202,37 @@ async function gateMainnetPayment(opts: {
 
   console.error("");
   console.error(
-    "💡 Tip: you can auto-approve small payments below a ceiling you choose.",
+    "💡 Optional: you can auto-approve future payments below a ceiling you choose.",
   );
   console.error(
-    "    Future calls ≤ the ceiling will be paid silently; larger ones still prompt.",
+    "   ⚠️  Risk: any 402 endpoint at or below the ceiling will be paid silently —",
   );
+  console.error(
+    "       including misconfigured or malicious ones. Only set a ceiling if you",
+  );
+  console.error(
+    "       trust the endpoints you call and always pass --expect-pay-to/--expect-amount.",
+  );
+  console.error(
+    "   Larger payments will still prompt. Remove '# autopay-ceiling-usd:' from",
+  );
+  console.error(`   ${secretFile} at any time to revoke.`);
   const ans = await promptLine(
-    "    Set an autopay ceiling (USD) now? [blank = skip, e.g. 0.10]: ",
+    "   Set a ceiling (USD)? [blank = skip, recommended; e.g. 0.05]: ",
   );
   if (!ans) return;
   const ceiling = parseFloat(ans);
   if (!Number.isFinite(ceiling) || ceiling <= 0) {
-    console.error("    Skipped (invalid amount).");
+    console.error("   Skipped (invalid amount).");
     return;
   }
   try {
     writeAutopayCeiling(secretFile, ceiling);
     console.error(
-      `    ✅ Saved autopay ceiling $${ceiling.toFixed(2)} to ${secretFile}.`,
-    );
-    console.error(
-      `       Remove the '# autopay-ceiling-usd:' line in that file to revoke.`,
+      `   ✅ Saved autopay ceiling $${ceiling.toFixed(2)} to ${secretFile}.`,
     );
   } catch (err) {
-    console.error(`    ⚠️  Could not write ceiling: ${(err as Error).message}`);
+    console.error(`   ⚠️  Could not write ceiling: ${(err as Error).message}`);
   }
 }
 
