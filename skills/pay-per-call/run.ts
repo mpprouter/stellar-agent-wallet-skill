@@ -87,6 +87,12 @@ interface RunInputs {
   signerConfig: SignerConfig;
 }
 
+interface InvoiceNormalizationResult {
+  body?: string;
+  changed: boolean;
+  notes: string[];
+}
+
 function resolveInputs(): RunInputs {
   const { base, rest } = parseBase(process.argv.slice(2));
   const args = parseCmdArgs(rest);
@@ -353,6 +359,120 @@ function buildInit(method: string, body?: string): RequestInit {
   };
 }
 
+function tryParseJsonObject(body?: string): Record<string, unknown> | null {
+  if (!body) return null;
+  try {
+    const parsed = JSON.parse(body);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function extractPaymentIdFromUrl(value: string): string | null {
+  const m = value.match(/\/payment-links\/(pl_[a-zA-Z0-9]+)/);
+  return m?.[1] ?? null;
+}
+
+function normalizeInvoicePayload(body?: string): InvoiceNormalizationResult {
+  const parsed = tryParseJsonObject(body);
+  if (!parsed) return { body, changed: false, notes: [] };
+
+  const notes: string[] = [];
+  let changed = false;
+
+  const asString = (v: unknown): string | undefined =>
+    typeof v === "string" && v.trim() ? v.trim() : undefined;
+
+  let url = asString(parsed.url);
+  let paymentId = asString(parsed.payment_id);
+
+  // Common aliases used by callers across providers.
+  if (!url) {
+    const aliasUrl =
+      asString(parsed.payment_link) ??
+      asString(parsed.link) ??
+      asString(parsed.invoice_url);
+    if (aliasUrl) {
+      url = aliasUrl;
+      parsed.url = aliasUrl;
+      changed = true;
+      notes.push("mapped alias key to `url`");
+    }
+  }
+
+  if (!paymentId) {
+    const aliasId =
+      asString(parsed.id) ??
+      asString(parsed.invoice_id) ??
+      asString(parsed.paymentLinkId);
+    if (aliasId?.startsWith("pl_")) {
+      paymentId = aliasId;
+      parsed.payment_id = aliasId;
+      changed = true;
+      notes.push("mapped alias key to `payment_id`");
+    }
+  }
+
+  if (!paymentId && url) {
+    const derived = extractPaymentIdFromUrl(url);
+    if (derived) {
+      parsed.payment_id = derived;
+      changed = true;
+      notes.push("derived `payment_id` from Coinbase URL");
+    }
+  }
+
+  return {
+    body: JSON.stringify(parsed),
+    changed,
+    notes,
+  };
+}
+
+function isMpprouterPayInvoice(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return (
+      u.host.endsWith("mpprouter.dev") &&
+      u.pathname.endsWith("/v1/services/rozo-agent-api/pay-invoice")
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function preflightQuoteInvoice(url: string, init: RequestInit): Promise<void> {
+  try {
+    const u = new URL(url);
+    const quoteUrl = `${u.origin}/v1/services/rozo-agent-api/quote-invoice`;
+    const res = await fetch(quoteUrl, init);
+    if (!res.ok) {
+      const detail = await res.text();
+      // Backward-compatible fallback: some public router deployments do not
+      // expose /quote-invoice even when /pay-invoice exists.
+      if (
+        res.status === 400 &&
+        detail.includes("Unknown public service route")
+      ) {
+        console.error("⚠️  quote-invoice route not publicly available; continuing without preflight.");
+        return;
+      }
+      console.error("⚠️  quote-invoice preflight failed:");
+      console.error(`   ${res.status} ${res.statusText}`);
+      if (detail) console.error(`   ${detail}`);
+      console.error("   Aborting before payment.");
+      process.exit(2);
+    }
+    console.error("✓ quote-invoice preflight OK");
+  } catch (err) {
+    console.error(`⚠️  quote-invoice preflight error: ${(err as Error).message}`);
+    console.error("   Aborting before payment.");
+    process.exit(2);
+  }
+}
+
 /**
  * Ask the response whether the path exists under a different HTTP method.
  * Modern router replies 405 with `allowed_methods`; older deployments
@@ -391,6 +511,16 @@ async function detectMethodMismatch(
 
 async function runPayFlow(inputs: RunInputs): Promise<void> {
   const { args, signerConfig } = inputs;
+  if (isMpprouterPayInvoice(args.url!) && args.method.toUpperCase() === "POST") {
+    const normalized = normalizeInvoicePayload(args.body);
+    if (normalized.changed) {
+      args.body = normalized.body;
+      console.error(`🧭 Normalized invoice payload: ${normalized.notes.join("; ")}`);
+    }
+    const quoteInit = buildInit(args.method, args.body);
+    await preflightQuoteInvoice(args.url!, quoteInit);
+  }
+
   let init = buildInit(args.method, args.body);
 
   let res = await fetch(args.url!, init);
