@@ -118,6 +118,22 @@ This skill is a **Stellar wallet**. It signs on-chain transactions using a priva
 
 See `references/mainnet-checklist.md` before pointing this at real money.
 
+### Credential loading order
+
+The signing key is resolved in this order — explicit always wins:
+
+1. `--identity <name>` → Stellar CLI identity (recommended for shared machines)
+2. `--secret-file <path>` → explicit file path
+3. Default file `.stellar-secret` in the working directory
+4. Fallback: `STELLAR_SECRET` (or legacy aliases) in `.env.prod` then `.env` in the same directory as the secret file
+
+**Keep main-wallet secrets out of `.env` files in this directory.** The fallback exists for legacy compatibility; prefer an explicit `--secret-file` or `--identity` so the credential source is always unambiguous. Check which public key is active before funding:
+
+```bash
+npx tsx scripts/generate-keypair.ts --show-public   # or
+stellar keys public-key <identity-name>
+```
+
 ### Secret handling guarantees
 
 The signing key is loaded from `.stellar-secret` (mode 600) or a Stellar CLI identity by `scripts/src/secret.ts` and passed as a function argument to `scripts/src/stellar-signer.ts`. The secret is:
@@ -139,6 +155,21 @@ This skill contacts only these endpoints (no other outbound connections):
 | `intentapiv4.rozo.ai` | Rozo cross-chain payment intents |
 | `horizon.stellar.org` | Stellar Horizon REST API (mainnet) |
 | `mainnet.sorobanrpc.com` | Soroban RPC (mainnet) |
+
+Wallet addresses, payment amounts, and bridge recipients are transmitted to these providers as part of normal operation. Use testnet endpoints while evaluating; override with `--horizon-url` and `--rpc-url` if needed.
+
+### Known scanner flags — by design
+
+Automated scanners will flag the following. These are intentional design choices, not vulnerabilities:
+
+| Flag | Why it exists | Mitigation |
+|---|---|---|
+| Defaults to mainnet | Wallet skills must work on mainnet; testnet is opt-in | Always pass `--network testnet` while prototyping |
+| `--yes` bypass | Required for headless automation pipelines | Never use on mainnet without independently verifying the transaction |
+| `--max-auto` session limit | Allows scripted pipelines to run without per-call prompts | Keep very low; combine with `--expect-pay-to`/`--expect-amount`; expires on process exit, never persisted |
+| Signs from 402 challenge fields | The payment target is supplied by the server | Always pass `--expect-pay-to`/`--expect-amount`/`--expect-asset` to validate before signing |
+| Private key access | This is a wallet — signing requires the key | Use a dedicated hot wallet with a small balance; never connect a primary account |
+| Dotenv fallback | Legacy compatibility for `STELLAR_SECRET` in `.env` | Use explicit `--secret-file` or `--identity`; keep main wallet secrets out of `.env` |
 
 ---
 
