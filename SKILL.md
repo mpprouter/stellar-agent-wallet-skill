@@ -112,7 +112,7 @@ This skill is a **Stellar wallet**. It signs on-chain transactions using a priva
 
 **Every mainnet spend prompts before signing — do not bypass this.** `send-payment` and `bridge` always prompt (unless `--yes`, which should never be used on mainnet without independently verifying the transaction). `pay-per-call` prompts before every mainnet payment with no persistent autopay — confirmation is required for every call.
 
-**Session-only automation with `--max-auto`:** For scripted pipelines, pass `--max-auto <USD>` to skip the prompt for payments at or below that amount within the current process only. This setting is never saved to disk and expires when the process exits. Always combine with `--expect-pay-to`/`--expect-amount` to validate the recipient and amount before signing.
+**Session-only automation with `--max-auto`, capped at $5.00:** For scripted pipelines, pass `--max-auto <USD>` to skip the prompt for payments at or below that amount within the current process only. This setting is never saved to disk and expires when the process exits. Values above `$5.00` are **rejected** — unattended signing is meant for per-call API prices, and a wide ceiling would let a compromised 402 server drain the wallet without a single prompt. Always combine with `--expect-pay-to`/`--expect-amount` to validate the recipient and amount before signing.
 
 **`pay-per-call` will pay any URL you point it at — always pass `--expect-pay-to <G...>` and `--expect-amount <USDC>`.** These flags make the script refuse to sign a 402 whose recipient or price drifts from what you expect. Without them, a compromised or misconfigured 402 server can redirect funds to any address. Omitting both flags is only appropriate in a fully-controlled test environment.
 
@@ -166,7 +166,7 @@ Automated scanners will flag the following. These are intentional design choices
 |---|---|---|
 | Defaults to mainnet | Wallet skills must work on mainnet; testnet is opt-in | Always pass `--network testnet` while prototyping |
 | `--yes` bypass | Required for headless automation pipelines | Never use on mainnet without independently verifying the transaction |
-| `--max-auto` session limit | Allows scripted pipelines to run without per-call prompts | Keep very low; combine with `--expect-pay-to`/`--expect-amount`; expires on process exit, never persisted |
+| `--max-auto` session limit | Allows scripted pipelines to run without per-call prompts | Hard-capped at $5.00; keep it far lower; combine with `--expect-pay-to`/`--expect-amount`; expires on process exit, never persisted |
 | Signs from 402 challenge fields | The payment target is supplied by the server | Always pass `--expect-pay-to`/`--expect-amount`/`--expect-asset` to validate before signing |
 | Private key access | This is a wallet — signing requires the key | Use a dedicated hot wallet with a small balance; never connect a primary account |
 | Dotenv fallback | Legacy compatibility for `STELLAR_SECRET` in `.env` | Use explicit `--secret-file` or `--identity`; keep main wallet secrets out of `.env` |
