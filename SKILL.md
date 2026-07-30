@@ -239,7 +239,18 @@ npx tsx skills/pay-per-call/run.ts "https://apiserver.mpprouter.dev$PATH_" \
   --method "$METHOD" \
   --body '{"query": "Summarize https://stripe.com/docs"}'
 # → 💸 Payment required (mpp) → signs → returns upstream result + Payment-Receipt
+# → 📝 Payment: 0.0250000 USDC → GDK3AVW3... (2026-07-30T14:00:33.000Z)
+# → 🔗 Explorer: https://stellar.expert/explorer/public/tx/<hash>
 ```
+
+After every successful payment `pay-per-call` decodes the `Payment-Receipt`
+header and prints what was paid, to whom, and a Stellar explorer link for the
+settlement transaction. Amount and recipient fall back to the 402 challenge if
+the receipt omits them. The raw receipt token is still printed (or written to
+`--receipt-out <path>`), and `--json` additionally emits a single
+`PAYMENT_RECEIPT_JSON {...}` line on stderr so a calling agent can extract the
+tx hash without parsing prose. All of this goes to stderr — stdout stays exactly
+the merchant response body.
 
 ## When to reach for Discover
 
