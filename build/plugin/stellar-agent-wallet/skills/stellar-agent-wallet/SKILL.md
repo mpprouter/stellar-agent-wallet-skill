@@ -75,15 +75,12 @@ metadata:
   # Commands that move funds.
   #
   # - send-payment, bridge: ALWAYS prompt on mainnet (unless --yes).
-  #   No autopay.
-  # - pay-per-call: prompts on mainnet by default. After the first
-  #   confirmed payment, the user is offered to save an autopay
-  #   ceiling (`# autopay-ceiling-usd:` line in the secret file).
-  #   Payments at or below the ceiling are signed silently; larger
-  #   ones continue to prompt. See skills/pay-per-call/SKILL.md.
-  # - pay-per-call also accepts --expect-pay-to / --expect-amount /
-  #   --expect-asset so callers (typically piped from `discover --json`)
-  #   can verify the 402 challenge matches the catalog. Mismatch → abort.
+  # - pay-per-call: prompts before every mainnet payment. No persistent
+  #   autopay — every payment requires explicit confirmation unless
+  #   --max-auto is passed for session-only automation.
+  # - Always pass --expect-pay-to / --expect-amount / --expect-asset
+  #   (typically piped from `discover --json`) to verify the 402
+  #   challenge matches the catalog. Mismatch → abort before signing.
   spending_commands:
     - pay-per-call
     - send-payment
@@ -105,7 +102,7 @@ metadata:
 
 This skill is a **Stellar wallet**. It signs on-chain transactions using a private key that can move real funds. Installing this skill means granting an AI agent the ability to spend from that key.
 
-**Use a dedicated hot wallet with a limited balance.** Never your main account.
+**Use a dedicated hot wallet with a limited balance — never your main account.** Create a fresh keypair with `npx tsx scripts/generate-keypair.ts`, fund it with only what you need for the session, and treat the balance as expendable. If the key is ever compromised, the blast radius is limited to that wallet.
 
 **Keys live in a file or an existing Stellar CLI identity, not chat.** Run `npx tsx scripts/generate-keypair.ts` and it writes a fresh secret to `.stellar-secret` with mode 600, refusing to overwrite an existing file. Every command takes `--secret-file <path>` (default `.stellar-secret`) or `--identity <name>`.
 
@@ -113,11 +110,29 @@ This skill is a **Stellar wallet**. It signs on-chain transactions using a priva
 
 **Never paste your secret into any UI or chat you do not fully control.** Keep it in the secret file only.
 
-**Every mainnet spend prompts by default.** `send-payment` and `bridge` always prompt (unless `--yes`). `pay-per-call` also prompts on the first mainnet call, then offers to save an **autopay ceiling** (e.g. $0.10) so that future payments at or below the ceiling are signed silently — larger ones keep prompting. The ceiling lives as a comment line inside the secret file (`# autopay-ceiling-usd: 0.10`) and is bound to that wallet. Delete the line to revoke. Every auto-paid call logs `[autopay] $X USDC ...` to stderr for audit.
+**Every mainnet spend prompts before signing — do not bypass this.** `send-payment` and `bridge` always prompt (unless `--yes`, which should never be used on mainnet without independently verifying the transaction). `pay-per-call` prompts before every mainnet payment with no persistent autopay — confirmation is required for every call.
 
-**`pay-per-call` will pay any URL you point it at.** Pass `--expect-pay-to <G...>` and `--expect-amount <USDC>` (typically piped from `discover --pick-one --json`) so the script refuses to sign a 402 whose recipient or price drifts from the catalog. Without `--expect-*`, a compromised 402 server can redirect funds to any address.
+**Session-only automation with `--max-auto`, capped at $5.00:** For scripted pipelines, pass `--max-auto <USD>` to skip the prompt for payments at or below that amount within the current process only. This setting is never saved to disk and expires when the process exits. Values above `$5.00` are **rejected** — unattended signing is meant for per-call API prices, and a wide ceiling would let a compromised 402 server drain the wallet without a single prompt. Always combine with `--expect-pay-to`/`--expect-amount` to validate the recipient and amount before signing.
+
+**`pay-per-call` will pay any URL you point it at — always pass `--expect-pay-to <G...>` and `--expect-amount <USDC>`.** These flags make the script refuse to sign a 402 whose recipient or price drifts from what you expect. Without them, a compromised or misconfigured 402 server can redirect funds to any address. Omitting both flags is only appropriate in a fully-controlled test environment.
 
 See `references/mainnet-checklist.md` before pointing this at real money.
+
+### Credential loading order
+
+The signing key is resolved in this order — explicit always wins:
+
+1. `--identity <name>` → Stellar CLI identity (recommended for shared machines)
+2. `--secret-file <path>` → explicit file path
+3. Default file `.stellar-secret` in the working directory
+4. Fallback: `STELLAR_SECRET` (or legacy aliases) in `.env.prod` then `.env` in the same directory as the secret file
+
+**Keep main-wallet secrets out of `.env` files in this directory.** The fallback exists for legacy compatibility; prefer an explicit `--secret-file` or `--identity` so the credential source is always unambiguous. Check which public key is active before funding:
+
+```bash
+npx tsx scripts/generate-keypair.ts --show-public   # or
+stellar keys public-key <identity-name>
+```
 
 ### Secret handling guarantees
 
@@ -130,6 +145,21 @@ The signing key is loaded from `.stellar-secret` (mode 600) or a Stellar CLI ide
 
 Secret access goes through `scripts/src/secret.ts`, which validates the Stellar strkey format before returning. `STELLAR_IDENTITY` may select an existing Stellar CLI identity when `--secret-file` is not supplied; it does not carry key material.
 
+**What these guarantees do *not* cover: the key is stored in plaintext.** Both non-identity sources — the `.stellar-secret` file (mode 600) and the `STELLAR_SECRET` / `STELLAR_PRIVATE_KEY` dotenv fallback — are unencrypted. Nothing above prevents the wallet from being drained by anyone who can read that file: a backup, a synced folder, a shared machine, a leaked CI artifact, or another process running as the same user. Mode 600 limits *who* can read it, not *what happens* once they do.
+
+Because of that, every command prints a one-line reminder on stderr when it loads a plaintext key:
+
+```
+⚠️  Signing key loaded from /path/.stellar-secret (plaintext — anyone who reads it can spend this wallet).
+   Safer: keep it in Stellar CLI key management and pass --identity <name>.
+```
+
+**Prefer `--identity <name>` for anything beyond throwaway testing.** It delegates key storage to the Stellar CLI, so the secret never has to exist as a plaintext file in your working directory or in a `.env` alongside your other configuration. The identity path prints no warning.
+
+Be clear about what `--identity` does and does not buy you: the loader calls `stellar keys secret <name>`, so the key is still **exported into this process** to sign. It must therefore be an exportable CLI identity — a hardware-backed identity that refuses to reveal its secret will error, not sign. What you gain is storage hygiene (one managed location, not a file per project, nothing to accidentally commit or sync), not device-held signing. Delegating signing to the CLI or a device is a separate change this skill does not implement today.
+
+If you do use a plaintext file, treat the wallet as a hot wallet holding only what you can afford to lose.
+
 ### Network endpoints contacted
 
 This skill contacts only these endpoints (no other outbound connections):
@@ -140,6 +170,21 @@ This skill contacts only these endpoints (no other outbound connections):
 | `intentapiv4.rozo.ai` | Rozo cross-chain payment intents |
 | `horizon.stellar.org` | Stellar Horizon REST API (mainnet) |
 | `mainnet.sorobanrpc.com` | Soroban RPC (mainnet) |
+
+Wallet addresses, payment amounts, and bridge recipients are transmitted to these providers as part of normal operation. Use testnet endpoints while evaluating; override with `--horizon-url` and `--rpc-url` if needed.
+
+### Known scanner flags — by design
+
+Automated scanners will flag the following. These are intentional design choices, not vulnerabilities:
+
+| Flag | Why it exists | Mitigation |
+|---|---|---|
+| Defaults to mainnet | Wallet skills must work on mainnet; testnet is opt-in | Always pass `--network testnet` while prototyping |
+| `--yes` bypass | Required for headless automation pipelines | Never use on mainnet without independently verifying the transaction |
+| `--max-auto` session limit | Allows scripted pipelines to run without per-call prompts | Hard-capped at $5.00; keep it far lower; combine with `--expect-pay-to`/`--expect-amount`; expires on process exit, never persisted |
+| Signs from 402 challenge fields | The payment target is supplied by the server | Always pass `--expect-pay-to`/`--expect-amount`/`--expect-asset` to validate before signing |
+| Private key access | This is a wallet — signing requires the key | Use a dedicated hot wallet with a small balance; never connect a primary account |
+| Dotenv fallback | Legacy compatibility for `STELLAR_SECRET` in `.env` | Use explicit `--secret-file` or `--identity`; keep main wallet secrets out of `.env` |
 
 ---
 
@@ -209,7 +254,18 @@ npx tsx skills/pay-per-call/run.ts "https://apiserver.mpprouter.dev$PATH_" \
   --method "$METHOD" \
   --body '{"query": "Summarize https://stripe.com/docs"}'
 # → 💸 Payment required (mpp) → signs → returns upstream result + Payment-Receipt
+# → 📝 Payment: 0.0250000 USDC → GDK3AVW3... (2026-07-30T14:00:33.000Z)
+# → 🔗 Explorer: https://stellar.expert/explorer/public/tx/<hash>
 ```
+
+After every successful payment `pay-per-call` decodes the `Payment-Receipt`
+header and prints what was paid, to whom, and a Stellar explorer link for the
+settlement transaction. Amount and recipient fall back to the 402 challenge if
+the receipt omits them. The raw receipt token is still printed (or written to
+`--receipt-out <path>`), and `--json` additionally emits a single
+`PAYMENT_RECEIPT_JSON {...}` line on stderr so a calling agent can extract the
+tx hash without parsing prose. All of this goes to stderr — stdout stays exactly
+the merchant response body.
 
 ## When to reach for Discover
 
@@ -265,8 +321,9 @@ The hard parts are already correct in `pay-per-call/run.ts`:
 - `validUntilLedger` math
 - Single-use credential semantics
 - Mainnet confirmation prompts with opt-in autopay ceiling
-- Optional `--expect-pay-to` / `--expect-amount` / `--expect-asset`
-  validation of the 402 challenge against catalog metadata
+- **Strongly recommended** `--expect-pay-to` / `--expect-amount` / `--expect-asset`
+  validation of the 402 challenge against catalog metadata (omit only in controlled test environments)
+- No persistent autopay — every mainnet payment requires confirmation; use `--max-auto` for session-only automation
 
 ### Example flow
 

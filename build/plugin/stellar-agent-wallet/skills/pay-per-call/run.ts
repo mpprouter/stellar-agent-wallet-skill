@@ -23,13 +23,10 @@ import {
 } from "../../scripts/src/pay-engine.js";
 import type { SignerConfig } from "../../scripts/src/stellar-signer.js";
 import { parseBase, type BaseConfig } from "../../scripts/src/cli-config.js";
-import {
-  loadSecretFromBase,
-  readAutopayCeiling,
-  writeAutopayCeiling,
-} from "../../scripts/src/secret.js";
+import { loadSecretFromBase } from "../../scripts/src/secret.js";
 import { Keypair } from "@stellar/stellar-sdk";
 import { readBalances, totalUsdc } from "../../scripts/src/balance.js";
+import { decodeReceipt, explorerUrl } from "../../scripts/src/receipt.js";
 
 interface CmdArgs {
   url?: string;
@@ -37,11 +34,9 @@ interface CmdArgs {
   body?: string;
   json: boolean;
   yes: boolean;
-  /** Explicit per-invocation ceiling. undefined → use ceiling from secret file. */
+  /** Session-only autopay ceiling. Payments ≤ this amount are signed without prompting. Not persisted. */
   maxAutoUsd?: number;
   receiptOut?: string;
-  /** Force a prompt even if the autopay ceiling would allow auto-pay. */
-  noAutopay: boolean;
   /** Expected 402 challenge fields. Any mismatch aborts before signing. */
   expectPayTo?: string;
   expectAsset?: string;
@@ -49,8 +44,18 @@ interface CmdArgs {
   expectAmountTolerance?: number;
 }
 
+/**
+ * Hard upper bound on the session-only `--max-auto` ceiling, in USD.
+ *
+ * Unattended signing is a convenience for scripted pipelines paying
+ * per-call API prices (fractions of a cent to a few cents). Anything
+ * approaching real money should cost a human confirmation, so the flag
+ * refuses values above this cap rather than silently honouring them.
+ */
+export const MAX_AUTO_CEILING_USD = 5;
+
 function parseCmdArgs(rest: string[]): CmdArgs {
-  const a: CmdArgs = { method: "GET", json: false, yes: false, noAutopay: false };
+  const a: CmdArgs = { method: "GET", json: false, yes: false };
   for (let i = 0; i < rest.length; i++) {
     const k = rest[i];
     if (k === "--method") a.method = rest[++i];
@@ -63,9 +68,23 @@ function parseCmdArgs(rest: string[]): CmdArgs {
         console.error("--max-auto must be a non-negative number");
         process.exit(1);
       }
+      if (v > MAX_AUTO_CEILING_USD) {
+        console.error(
+          `❌ --max-auto $${v.toFixed(2)} exceeds the hard cap of $${MAX_AUTO_CEILING_USD.toFixed(2)}.`,
+        );
+        console.error(
+          "   Unattended signing is capped on purpose: a wide ceiling lets a",
+        );
+        console.error(
+          "   compromised or misconfigured 402 server drain the wallet without",
+        );
+        console.error(
+          "   a single prompt. Lower the value, or confirm each payment manually.",
+        );
+        process.exit(1);
+      }
       a.maxAutoUsd = v;
-    } else if (k === "--no-autopay") a.noAutopay = true;
-    else if (k === "--receipt-out") a.receiptOut = rest[++i];
+    } else if (k === "--receipt-out") a.receiptOut = rest[++i];
     else if (k === "--expect-pay-to") a.expectPayTo = rest[++i];
     else if (k === "--expect-asset") a.expectAsset = rest[++i];
     else if (k === "--expect-amount") a.expectAmountUsdc = rest[++i];
@@ -85,6 +104,12 @@ interface RunInputs {
   base: BaseConfig;
   args: CmdArgs;
   signerConfig: SignerConfig;
+}
+
+interface InvoiceNormalizationResult {
+  body?: string;
+  changed: boolean;
+  notes: string[];
 }
 
 function resolveInputs(): RunInputs {
@@ -114,66 +139,39 @@ async function promptConfirm(message: string): Promise<boolean> {
   return ans.trim().toLowerCase() === "yes";
 }
 
-async function promptLine(message: string): Promise<string> {
-  const readline = await import("node:readline/promises");
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  const ans = await rl.question(message);
-  rl.close();
-  return ans.trim();
-}
-
 /**
- * Decide whether this payment needs a human confirmation, and offer
- * to enroll the wallet in autopay after the first confirmed mainnet
- * payment.
+ * Decide whether this payment needs a human confirmation.
  *
  * Ordering, least-surprising-first:
  *   1. Testnet or --yes → no prompt.
- *   2. --no-autopay → always prompt (defeats saved ceiling for one call).
- *   3. Explicit --max-auto N → auto-pay if amount ≤ N, else prompt.
- *      Does NOT touch the saved ceiling.
- *   4. Saved autopay-ceiling-usd in secret file → auto-pay if amount ≤ it.
- *   5. No ceiling → prompt. After user confirms, offer to save a
- *      ceiling so future small payments are silent.
+ *   2. Explicit --max-auto N → auto-pay if amount ≤ N, else prompt.
+ *      Session-only: never read from or written to disk.
+ *   3. Otherwise → prompt.
  *
- * Auto-pay always logs `[autopay] $X to G...` to stderr so there is a
- * trail, even when silent.
+ * There is no persistent autopay ceiling. Unattended signing is opt-in
+ * per process, bounded by MAX_AUTO_CEILING_USD, and every auto-signed
+ * payment logs a `[autopay]` line to stderr so there is always a trail.
  */
 async function gateMainnetPayment(opts: {
   amountUsd: number;
   humanAmount: string;
+  payTo: string;
   args: CmdArgs;
-  secretFile: string;
   network: "testnet" | "pubnet";
 }): Promise<void> {
-  const { amountUsd, humanAmount, args, secretFile, network } = opts;
+  const { amountUsd, humanAmount, payTo, args, network } = opts;
 
   if (network !== "pubnet") return;
   if (args.yes) return;
 
-  if (opts.secretFile === "" && args.maxAutoUsd === undefined) {
-    // Identity-backed wallets do not have a wallet-local secret file where
-    // the persistent autopay ceiling can be stored. Explicit --max-auto and
-    // --yes still work for automation.
-  } else if (!args.noAutopay) {
-    if (args.maxAutoUsd !== undefined) {
-      if (amountUsd <= args.maxAutoUsd) {
-        console.error(
-          `[autopay] $${humanAmount} USDC (≤ --max-auto $${args.maxAutoUsd.toFixed(2)})`,
-        );
-        return;
-      }
-    } else {
-      const savedCeiling = readAutopayCeiling(secretFile);
-      if (savedCeiling > 0 && amountUsd <= savedCeiling) {
-        console.error(
-          `[autopay] $${humanAmount} USDC (≤ saved ceiling $${savedCeiling.toFixed(2)})`,
-        );
-        return;
-      }
+  if (args.maxAutoUsd !== undefined) {
+    if (amountUsd <= args.maxAutoUsd) {
+      console.error(
+        `[autopay] $${humanAmount} USDC → ${payTo} auto-signed ` +
+          `(--max-auto $${args.maxAutoUsd.toFixed(2)}, session-only, ` +
+          `no confirmation asked — drop the flag to restore prompts)`,
+      );
+      return;
     }
   }
 
@@ -183,43 +181,6 @@ async function gateMainnetPayment(opts: {
   if (!ok) {
     console.error("Aborted.");
     process.exit(0);
-  }
-
-  if (!secretFile) return;
-  // Post-confirm enrollment: only offer if the user hasn't already
-  // picked a ceiling, hasn't overridden with --max-auto, and isn't
-  // forcing prompts via --no-autopay.
-  if (args.noAutopay) return;
-  if (args.maxAutoUsd !== undefined) return;
-  const existing = readAutopayCeiling(secretFile);
-  if (existing > 0) return;
-
-  console.error("");
-  console.error(
-    "💡 Tip: you can auto-approve small payments below a ceiling you choose.",
-  );
-  console.error(
-    "    Future calls ≤ the ceiling will be paid silently; larger ones still prompt.",
-  );
-  const ans = await promptLine(
-    "    Set an autopay ceiling (USD) now? [blank = skip, e.g. 0.10]: ",
-  );
-  if (!ans) return;
-  const ceiling = parseFloat(ans);
-  if (!Number.isFinite(ceiling) || ceiling <= 0) {
-    console.error("    Skipped (invalid amount).");
-    return;
-  }
-  try {
-    writeAutopayCeiling(secretFile, ceiling);
-    console.error(
-      `    ✅ Saved autopay ceiling $${ceiling.toFixed(2)} to ${secretFile}.`,
-    );
-    console.error(
-      `       Remove the '# autopay-ceiling-usd:' line in that file to revoke.`,
-    );
-  } catch (err) {
-    console.error(`    ⚠️  Could not write ceiling: ${(err as Error).message}`);
   }
 }
 
@@ -265,6 +226,52 @@ async function preflightPayerReady(opts: {
     `   npx tsx skills/onboard/run.ts ${opts.base.identity ? `--identity ${opts.base.identity}` : `--secret-file ${opts.base.secretFile}`} --network ${opts.base.network}`,
   );
   process.exit(4);
+}
+
+/**
+ * Print what was actually paid and where to verify it. Falls back to the
+ * 402 challenge for amount/recipient when the receipt does not carry them,
+ * so the summary is always populated after a successful payment.
+ */
+function reportReceipt(opts: {
+  receipt: string;
+  challenge: ParsedChallenge;
+  network: "testnet" | "pubnet";
+  showRaw: boolean;
+  jsonMode: boolean;
+}): void {
+  const { receipt, challenge, network, showRaw, jsonMode } = opts;
+  const decoded = decodeReceipt(receipt);
+
+  const amount = decoded.amount ?? baseUnitsToUsdc(challenge.amount);
+  const payTo = decoded.payTo ?? challenge.payTo;
+  const when = decoded.timestamp ? ` (${decoded.timestamp})` : "";
+  console.error(`📝 Payment: ${amount} USDC → ${payTo}${when}`);
+
+  if (decoded.txHash) {
+    console.error(`🔗 Explorer: ${explorerUrl(decoded.txHash, network)}`);
+  } else {
+    console.error("   (receipt carried no transaction reference)");
+  }
+
+  if (showRaw) {
+    console.error(`   Payment-Receipt: ${receipt}`);
+  }
+
+  // Machine-readable line for calling agents. Stays on stderr so stdout
+  // remains exactly the merchant response body.
+  if (jsonMode) {
+    console.error(
+      `PAYMENT_RECEIPT_JSON ${JSON.stringify({
+        amount,
+        payTo,
+        txHash: decoded.txHash ?? null,
+        timestamp: decoded.timestamp ?? null,
+        explorer: decoded.txHash ? explorerUrl(decoded.txHash, network) : null,
+        receipt,
+      })}`,
+    );
+  }
 }
 
 async function dumpResponse(res: Response, jsonMode: boolean) {
@@ -353,6 +360,120 @@ function buildInit(method: string, body?: string): RequestInit {
   };
 }
 
+function tryParseJsonObject(body?: string): Record<string, unknown> | null {
+  if (!body) return null;
+  try {
+    const parsed = JSON.parse(body);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function extractPaymentIdFromUrl(value: string): string | null {
+  const m = value.match(/\/payment-links\/(pl_[a-zA-Z0-9]+)/);
+  return m?.[1] ?? null;
+}
+
+function normalizeInvoicePayload(body?: string): InvoiceNormalizationResult {
+  const parsed = tryParseJsonObject(body);
+  if (!parsed) return { body, changed: false, notes: [] };
+
+  const notes: string[] = [];
+  let changed = false;
+
+  const asString = (v: unknown): string | undefined =>
+    typeof v === "string" && v.trim() ? v.trim() : undefined;
+
+  let url = asString(parsed.url);
+  let paymentId = asString(parsed.payment_id);
+
+  // Common aliases used by callers across providers.
+  if (!url) {
+    const aliasUrl =
+      asString(parsed.payment_link) ??
+      asString(parsed.link) ??
+      asString(parsed.invoice_url);
+    if (aliasUrl) {
+      url = aliasUrl;
+      parsed.url = aliasUrl;
+      changed = true;
+      notes.push("mapped alias key to `url`");
+    }
+  }
+
+  if (!paymentId) {
+    const aliasId =
+      asString(parsed.id) ??
+      asString(parsed.invoice_id) ??
+      asString(parsed.paymentLinkId);
+    if (aliasId?.startsWith("pl_")) {
+      paymentId = aliasId;
+      parsed.payment_id = aliasId;
+      changed = true;
+      notes.push("mapped alias key to `payment_id`");
+    }
+  }
+
+  if (!paymentId && url) {
+    const derived = extractPaymentIdFromUrl(url);
+    if (derived) {
+      parsed.payment_id = derived;
+      changed = true;
+      notes.push("derived `payment_id` from Coinbase URL");
+    }
+  }
+
+  return {
+    body: JSON.stringify(parsed),
+    changed,
+    notes,
+  };
+}
+
+function isMpprouterPayInvoice(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return (
+      u.host.endsWith("mpprouter.dev") &&
+      u.pathname.endsWith("/v1/services/rozo-agent-api/pay-invoice")
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function preflightQuoteInvoice(url: string, init: RequestInit): Promise<void> {
+  try {
+    const u = new URL(url);
+    const quoteUrl = `${u.origin}/v1/services/rozo-agent-api/quote-invoice`;
+    const res = await fetch(quoteUrl, init);
+    if (!res.ok) {
+      const detail = await res.text();
+      // Backward-compatible fallback: some public router deployments do not
+      // expose /quote-invoice even when /pay-invoice exists.
+      if (
+        res.status === 400 &&
+        detail.includes("Unknown public service route")
+      ) {
+        console.error("⚠️  quote-invoice route not publicly available; continuing without preflight.");
+        return;
+      }
+      console.error("⚠️  quote-invoice preflight failed:");
+      console.error(`   ${res.status} ${res.statusText}`);
+      if (detail) console.error(`   ${detail}`);
+      console.error("   Aborting before payment.");
+      process.exit(2);
+    }
+    console.error("✓ quote-invoice preflight OK");
+  } catch (err) {
+    console.error(`⚠️  quote-invoice preflight error: ${(err as Error).message}`);
+    console.error("   Aborting before payment.");
+    process.exit(2);
+  }
+}
+
 /**
  * Ask the response whether the path exists under a different HTTP method.
  * Modern router replies 405 with `allowed_methods`; older deployments
@@ -389,8 +510,26 @@ async function detectMethodMismatch(
   return null;
 }
 
+function printStartupWarnings(inputs: RunInputs): void {
+  const { base, args } = inputs;
+  if (base.network === "pubnet" && !args.yes) {
+    console.error("⚠️  MAINNET: real USDC will move. Pass --network testnet to prototype.");
+  }
+}
+
 async function runPayFlow(inputs: RunInputs): Promise<void> {
   const { args, signerConfig } = inputs;
+  printStartupWarnings(inputs);
+  if (isMpprouterPayInvoice(args.url!) && args.method.toUpperCase() === "POST") {
+    const normalized = normalizeInvoicePayload(args.body);
+    if (normalized.changed) {
+      args.body = normalized.body;
+      console.error(`🧭 Normalized invoice payload: ${normalized.notes.join("; ")}`);
+    }
+    const quoteInit = buildInit(args.method, args.body);
+    await preflightQuoteInvoice(args.url!, quoteInit);
+  }
+
   let init = buildInit(args.method, args.body);
 
   let res = await fetch(args.url!, init);
@@ -463,8 +602,8 @@ async function runPayFlow(inputs: RunInputs): Promise<void> {
   await gateMainnetPayment({
     amountUsd,
     humanAmount,
+    payTo: challenge.payTo,
     args,
-    secretFile: inputs.base.identity ? "" : inputs.base.secretFile,
     network: signerConfig.network,
   });
 
@@ -476,12 +615,19 @@ async function runPayFlow(inputs: RunInputs): Promise<void> {
   res = await fetch(args.url!, { ...init, headers: retryHeaders });
 
   const receipt = res.headers.get("payment-receipt");
-  if (receipt && args.receiptOut) {
-    const fs = await import("node:fs/promises");
-    await fs.writeFile(args.receiptOut, receipt);
-    console.error(`📝 Receipt saved to ${args.receiptOut}`);
-  } else if (receipt) {
-    console.error(`📝 Payment-Receipt: ${receipt}`);
+  if (receipt) {
+    if (args.receiptOut) {
+      const fs = await import("node:fs/promises");
+      await fs.writeFile(args.receiptOut, receipt);
+      console.error(`📝 Receipt saved to ${args.receiptOut}`);
+    }
+    reportReceipt({
+      receipt,
+      challenge,
+      network: signerConfig.network,
+      showRaw: args.receiptOut === undefined,
+      jsonMode: args.json,
+    });
   }
 
   // Handle async 202 — poll until job completes

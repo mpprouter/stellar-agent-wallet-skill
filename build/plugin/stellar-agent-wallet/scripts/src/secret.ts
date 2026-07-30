@@ -150,6 +150,38 @@ export function loadSecretFromIdentity(
 }
 
 /**
+ * Print a one-line reminder that the loaded key is sitting in plaintext,
+ * with a pointer to the safer alternative.
+ *
+ * Both supported non-identity sources — a `.stellar-secret` file and a
+ * `STELLAR_SECRET`-style dotenv entry — are unencrypted: whoever reads
+ * the file owns the wallet. That is a deliberate trade-off for an agent
+ * skill, but it should never be invisible at runtime, so every process
+ * that loads such a key says so once on stderr.
+ *
+ * `--identity <name>` delegates to Stellar CLI key management instead
+ * and does not warn.
+ */
+let plaintextNotePrinted = false;
+
+function notePlaintextSecret(source: SecretSource): void {
+  if (source.kind === "identity") return;
+  if (plaintextNotePrinted) return;
+  plaintextNotePrinted = true;
+
+  const what =
+    source.kind === "env"
+      ? `${source.envKey ?? "STELLAR_SECRET"} in ${source.path}`
+      : source.path;
+  console.error(
+    `⚠️  Signing key loaded from ${what} (plaintext — anyone who reads it can spend this wallet).`,
+  );
+  console.error(
+    "   Safer: keep it in Stellar CLI key management and pass --identity <name>.",
+  );
+}
+
+/**
  * Like loadSecretFromFile but also returns where the secret came from.
  * onboard uses the source info to suggest a migration from legacy env
  * key names to the canonical STELLAR_SECRET.
@@ -178,10 +210,13 @@ export function loadSecretWithSource(
             `ℹ️  Secret file ${path} not found; loaded ${hit.key} from ${envPath}${legacyNote}`,
           );
           installRedactor(hit.value);
-          return {
-            secret: hit.value,
-            source: { path: envPath, kind: "env", envKey: hit.key },
+          const envSource: SecretSource = {
+            path: envPath,
+            kind: "env",
+            envKey: hit.key,
           };
+          notePlaintextSecret(envSource);
+          return { secret: hit.value, source: envSource };
         }
       }
       throw new Error(
@@ -214,99 +249,14 @@ export function loadSecretWithSource(
   }
 
   installRedactor(line);
-  return {
-    secret: line,
-    source: { path: nodePath.resolve(path), kind: "file" },
+  const fileSource: SecretSource = {
+    path: nodePath.resolve(path),
+    kind: "file",
   };
+  notePlaintextSecret(fileSource);
+  return { secret: line, source: fileSource };
 }
 
-/**
- * Read the autopay ceiling from a secret file.
- *
- * The ceiling is stored as a comment line in the secret file itself:
- *   # autopay-ceiling-usd: 0.10
- *
- * Rationale: keeping the ceiling next to the secret means it's bound
- * to the wallet, travels with it, and is removed when the secret file
- * is deleted. No extra config file, no shell env var to forget.
- *
- * Returns 0 when:
- *   - the file does not exist
- *   - no directive line is present
- *   - the value parses to NaN, 0, or a negative number
- *
- * Callers treat 0 as "always prompt".
- */
-export function readAutopayCeiling(path: string): number {
-  let raw: string;
-  try {
-    raw = fs.readFileSync(path, "utf8");
-  } catch {
-    return 0;
-  }
-  for (const line of raw.split(/\r?\n/)) {
-    const m = line.match(/^\s*#\s*autopay-ceiling-usd\s*:\s*([0-9.]+)\s*$/i);
-    if (m) {
-      const n = parseFloat(m[1]);
-      return Number.isFinite(n) && n > 0 ? n : 0;
-    }
-  }
-  return 0;
-}
-
-/**
- * Persist the autopay ceiling into the secret file, preserving the
- * secret line and mode 600. Idempotent — replaces any existing
- * directive line; passing 0 removes the directive.
- */
-export function writeAutopayCeiling(path: string, ceilingUsd: number): void {
-  const raw = fs.readFileSync(path, "utf8");
-  const DIRECTIVE = /^\s*#\s*autopay-ceiling-usd\s*:.*$/i;
-  const lines = raw.split(/\r?\n/);
-  const kept = lines.filter((l) => !DIRECTIVE.test(l));
-  const out: string[] = [];
-  if (ceilingUsd > 0) {
-    // Insert directive after the first comment block, or at the top
-    // if the file starts with the secret.
-    let inserted = false;
-    for (let i = 0; i < kept.length; i++) {
-      out.push(kept[i]);
-      if (!inserted && kept[i].trimStart().startsWith("#")) {
-        // Still inside the comment header — keep going, will insert
-        // right before the first non-comment line.
-        continue;
-      }
-      if (!inserted) {
-        // This line is the first non-comment — replace it: put the
-        // directive *before* it, then the line itself.
-        out.pop();
-        out.push(`# autopay-ceiling-usd: ${ceilingUsd.toFixed(2)}`);
-        out.push(kept[i]);
-        inserted = true;
-      }
-    }
-    if (!inserted) {
-      out.push(`# autopay-ceiling-usd: ${ceilingUsd.toFixed(2)}`);
-    }
-  } else {
-    out.push(...kept);
-  }
-
-  // Rewrite with mode 600 preserved. Use openSync with a mode arg in
-  // case the file was created by some other tool without 600.
-  const body = out.join("\n");
-  const fd = fs.openSync(path, "w", 0o600);
-  try {
-    fs.writeSync(fd, body);
-  } finally {
-    fs.closeSync(fd);
-  }
-  try {
-    fs.chmodSync(path, 0o600);
-  } catch {
-    /* ignore on platforms that don't support chmod */
-  }
-}
 
 /**
  * Wrap process.stdout.write and process.stderr.write so that any
