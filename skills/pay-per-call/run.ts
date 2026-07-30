@@ -26,6 +26,7 @@ import { parseBase, type BaseConfig } from "../../scripts/src/cli-config.js";
 import { loadSecretFromBase } from "../../scripts/src/secret.js";
 import { Keypair } from "@stellar/stellar-sdk";
 import { readBalances, totalUsdc } from "../../scripts/src/balance.js";
+import { decodeReceipt, explorerUrl } from "../../scripts/src/receipt.js";
 
 interface CmdArgs {
   url?: string;
@@ -212,6 +213,52 @@ async function preflightPayerReady(opts: {
     `   npx tsx skills/onboard/run.ts ${opts.base.identity ? `--identity ${opts.base.identity}` : `--secret-file ${opts.base.secretFile}`} --network ${opts.base.network}`,
   );
   process.exit(4);
+}
+
+/**
+ * Print what was actually paid and where to verify it. Falls back to the
+ * 402 challenge for amount/recipient when the receipt does not carry them,
+ * so the summary is always populated after a successful payment.
+ */
+function reportReceipt(opts: {
+  receipt: string;
+  challenge: ParsedChallenge;
+  network: "testnet" | "pubnet";
+  showRaw: boolean;
+  jsonMode: boolean;
+}): void {
+  const { receipt, challenge, network, showRaw, jsonMode } = opts;
+  const decoded = decodeReceipt(receipt);
+
+  const amount = decoded.amount ?? baseUnitsToUsdc(challenge.amount);
+  const payTo = decoded.payTo ?? challenge.payTo;
+  const when = decoded.timestamp ? ` (${decoded.timestamp})` : "";
+  console.error(`📝 Payment: ${amount} USDC → ${payTo}${when}`);
+
+  if (decoded.txHash) {
+    console.error(`🔗 Explorer: ${explorerUrl(decoded.txHash, network)}`);
+  } else {
+    console.error("   (receipt carried no transaction reference)");
+  }
+
+  if (showRaw) {
+    console.error(`   Payment-Receipt: ${receipt}`);
+  }
+
+  // Machine-readable line for calling agents. Stays on stderr so stdout
+  // remains exactly the merchant response body.
+  if (jsonMode) {
+    console.error(
+      `PAYMENT_RECEIPT_JSON ${JSON.stringify({
+        amount,
+        payTo,
+        txHash: decoded.txHash ?? null,
+        timestamp: decoded.timestamp ?? null,
+        explorer: decoded.txHash ? explorerUrl(decoded.txHash, network) : null,
+        receipt,
+      })}`,
+    );
+  }
 }
 
 async function dumpResponse(res: Response, jsonMode: boolean) {
@@ -554,12 +601,19 @@ async function runPayFlow(inputs: RunInputs): Promise<void> {
   res = await fetch(args.url!, { ...init, headers: retryHeaders });
 
   const receipt = res.headers.get("payment-receipt");
-  if (receipt && args.receiptOut) {
-    const fs = await import("node:fs/promises");
-    await fs.writeFile(args.receiptOut, receipt);
-    console.error(`📝 Receipt saved to ${args.receiptOut}`);
-  } else if (receipt) {
-    console.error(`📝 Payment-Receipt: ${receipt}`);
+  if (receipt) {
+    if (args.receiptOut) {
+      const fs = await import("node:fs/promises");
+      await fs.writeFile(args.receiptOut, receipt);
+      console.error(`📝 Receipt saved to ${args.receiptOut}`);
+    }
+    reportReceipt({
+      receipt,
+      challenge,
+      network: signerConfig.network,
+      showRaw: args.receiptOut === undefined,
+      jsonMode: args.json,
+    });
   }
 
   // Handle async 202 — poll until job completes
