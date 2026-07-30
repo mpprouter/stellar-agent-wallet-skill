@@ -13,12 +13,10 @@
  * reported as a failure because of a cosmetic parsing problem.
  */
 
-import { baseUnitsToUsdc } from "./pay-engine.js";
-
 export interface ReceiptSummary {
-  /** Stellar transaction hash, if the receipt carries one. */
+  /** Stellar transaction hash, only when it is a well-formed 64-hex hash. */
   txHash?: string;
-  /** USDC amount as a human string, converted from base units when needed. */
+  /** Human USDC amount, only when the receipt states it unambiguously. */
   amount?: string;
   /** Destination account the payment settled to. */
   payTo?: string;
@@ -55,10 +53,15 @@ export function decodeReceipt(receipt: string): ReceiptSummary {
     return undefined;
   };
 
-  // Servers report either human USDC ("0.025") or base units ("250000").
+  // Amounts are reported either as human USDC ("0.025") or as base units
+  // ("250000"), and the token carries no unit metadata to tell them apart.
+  // A bare integer is genuinely ambiguous — "1" is both 1 USDC and
+  // 0.0000001 USDC — and guessing wrong misreports what the user paid by
+  // seven orders of magnitude. So we only accept a decimal-point value as
+  // human USDC and leave the ambiguous case undefined; the caller falls
+  // back to the 402 challenge, whose units are unambiguous.
   const rawAmount = str("amount", "maxAmountRequired", "value");
-  const amount =
-    rawAmount && /^\d+$/.test(rawAmount) ? baseUnitsToUsdc(rawAmount) : rawAmount;
+  const amount = rawAmount && /^\d+\.\d+$/.test(rawAmount) ? rawAmount : undefined;
 
   const rawTimestamp = str("timestamp", "iat", "settledAt");
   const timestamp =
@@ -66,8 +69,16 @@ export function decodeReceipt(receipt: string): ReceiptSummary {
       ? new Date(Number(rawTimestamp) * 1000).toISOString()
       : rawTimestamp;
 
+  // Explicit transaction-hash fields win over the generic `reference`,
+  // which is not guaranteed to be a transaction hash at all. Whatever we
+  // pick must look like a Stellar tx hash (32 bytes, hex) before it is
+  // turned into an explorer URL — a bad link is worse than no link.
+  const candidate = str("transaction", "txHash", "tx_hash", "hash", "reference");
+  const txHash =
+    candidate && /^[0-9a-fA-F]{64}$/.test(candidate) ? candidate : undefined;
+
   return {
-    txHash: str("reference", "transaction", "txHash", "tx_hash", "hash"),
+    txHash,
     amount,
     payTo: str("payTo", "pay_to", "destination", "to", "recipient"),
     timestamp,
