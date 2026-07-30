@@ -145,6 +145,21 @@ The signing key is loaded from `.stellar-secret` (mode 600) or a Stellar CLI ide
 
 Secret access goes through `scripts/src/secret.ts`, which validates the Stellar strkey format before returning. `STELLAR_IDENTITY` may select an existing Stellar CLI identity when `--secret-file` is not supplied; it does not carry key material.
 
+**What these guarantees do *not* cover: the key is stored in plaintext.** Both non-identity sources — the `.stellar-secret` file (mode 600) and the `STELLAR_SECRET` / `STELLAR_PRIVATE_KEY` dotenv fallback — are unencrypted. Nothing above prevents the wallet from being drained by anyone who can read that file: a backup, a synced folder, a shared machine, a leaked CI artifact, or another process running as the same user. Mode 600 limits *who* can read it, not *what happens* once they do.
+
+Because of that, every command prints a one-line reminder on stderr when it loads a plaintext key:
+
+```
+⚠️  Signing key loaded from /path/.stellar-secret (plaintext — anyone who reads it can spend this wallet).
+   Safer: keep it in Stellar CLI key management and pass --identity <name>.
+```
+
+**Prefer `--identity <name>` for anything beyond throwaway testing.** It delegates key storage to the Stellar CLI, so the secret never has to exist as a plaintext file in your working directory or in a `.env` alongside your other configuration. The identity path prints no warning.
+
+Be clear about what `--identity` does and does not buy you: the loader calls `stellar keys secret <name>`, so the key is still **exported into this process** to sign. It must therefore be an exportable CLI identity — a hardware-backed identity that refuses to reveal its secret will error, not sign. What you gain is storage hygiene (one managed location, not a file per project, nothing to accidentally commit or sync), not device-held signing. Delegating signing to the CLI or a device is a separate change this skill does not implement today.
+
+If you do use a plaintext file, treat the wallet as a hot wallet holding only what you can afford to lose.
+
 ### Network endpoints contacted
 
 This skill contacts only these endpoints (no other outbound connections):

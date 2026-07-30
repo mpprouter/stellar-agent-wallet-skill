@@ -150,6 +150,38 @@ export function loadSecretFromIdentity(
 }
 
 /**
+ * Print a one-line reminder that the loaded key is sitting in plaintext,
+ * with a pointer to the safer alternative.
+ *
+ * Both supported non-identity sources — a `.stellar-secret` file and a
+ * `STELLAR_SECRET`-style dotenv entry — are unencrypted: whoever reads
+ * the file owns the wallet. That is a deliberate trade-off for an agent
+ * skill, but it should never be invisible at runtime, so every process
+ * that loads such a key says so once on stderr.
+ *
+ * `--identity <name>` delegates to Stellar CLI key management instead
+ * and does not warn.
+ */
+let plaintextNotePrinted = false;
+
+function notePlaintextSecret(source: SecretSource): void {
+  if (source.kind === "identity") return;
+  if (plaintextNotePrinted) return;
+  plaintextNotePrinted = true;
+
+  const what =
+    source.kind === "env"
+      ? `${source.envKey ?? "STELLAR_SECRET"} in ${source.path}`
+      : source.path;
+  console.error(
+    `⚠️  Signing key loaded from ${what} (plaintext — anyone who reads it can spend this wallet).`,
+  );
+  console.error(
+    "   Safer: keep it in Stellar CLI key management and pass --identity <name>.",
+  );
+}
+
+/**
  * Like loadSecretFromFile but also returns where the secret came from.
  * onboard uses the source info to suggest a migration from legacy env
  * key names to the canonical STELLAR_SECRET.
@@ -178,10 +210,13 @@ export function loadSecretWithSource(
             `ℹ️  Secret file ${path} not found; loaded ${hit.key} from ${envPath}${legacyNote}`,
           );
           installRedactor(hit.value);
-          return {
-            secret: hit.value,
-            source: { path: envPath, kind: "env", envKey: hit.key },
+          const envSource: SecretSource = {
+            path: envPath,
+            kind: "env",
+            envKey: hit.key,
           };
+          notePlaintextSecret(envSource);
+          return { secret: hit.value, source: envSource };
         }
       }
       throw new Error(
@@ -214,10 +249,12 @@ export function loadSecretWithSource(
   }
 
   installRedactor(line);
-  return {
-    secret: line,
-    source: { path: nodePath.resolve(path), kind: "file" },
+  const fileSource: SecretSource = {
+    path: nodePath.resolve(path),
+    kind: "file",
   };
+  notePlaintextSecret(fileSource);
+  return { secret: line, source: fileSource };
 }
 
 

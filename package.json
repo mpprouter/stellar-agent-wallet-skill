@@ -8,8 +8,9 @@
     "build:all": "npm run build:skill && npm run build:plugin",
     "test:sign": "tsx scripts/smoke-test-sign.ts",
     "test:envelope": "tsx scripts/smoke-test-mpp-envelope.ts",
-    "test": "npm run test:envelope && npm run test:sign && npm run test:receipt",
-    "test:receipt": "tsx scripts/smoke-test-receipt.ts"
+    "test": "npm run test:envelope && npm run test:sign && npm run test:receipt && npm run test:secret-note",
+    "test:receipt": "tsx scripts/smoke-test-receipt.ts",
+    "test:secret-note": "tsx scripts/smoke-test-secret-note.ts"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^15.0.1",
