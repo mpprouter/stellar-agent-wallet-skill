@@ -121,11 +121,11 @@ If there is no `X-Job-Poll-Url` header, the 202 body is printed as-is.
 ## Safety
 
 - ✅ **Credentials are single-use** — if the first retry fails, the credential is burned. Don't blindly re-retry; start fresh.
-- ✅ **Every mainnet payment prompts by default.** No silent auto-pay out of the box. After you confirm the first payment, the script offers to save an autopay ceiling (e.g. $0.10) so future payments at or below that amount go through without a prompt. The ceiling is stored as a `# autopay-ceiling-usd:` comment inside the secret file itself, bound to the wallet. Delete the line to revoke.
-  - `--max-auto <usd>` — one-shot override for this call only; does not touch the saved ceiling.
-  - `--no-autopay` — force a prompt for this call even if a ceiling is saved.
+- ✅ **Every mainnet payment prompts. There is no persistent autopay.** Nothing is ever saved to disk that would let a later call sign silently; unattended signing must be opted into explicitly, per process.
+  - `--max-auto <usd>` — session-only ceiling: payments at or below it are signed without a prompt, for this process only. Never persisted, gone when the process exits.
+  - **Hard cap: `--max-auto` above `$5.00` is rejected.** A wide ceiling lets a compromised or misconfigured 402 server drain the wallet without a single prompt, so the cap is enforced by the script rather than left to the caller.
   - `--yes` — skip confirmation entirely (dangerous on mainnet; use only in trusted automation).
-  - Every auto-paid call still logs `[autopay] $X USDC ...` to stderr so there is a trail.
+  - Every auto-signed call logs `[autopay] $X USDC → G... auto-signed (--max-auto $Y, session-only, ...)` to stderr, so unattended spending always leaves a trail.
 - ✅ **Challenge validation (opt-in).** Pass `--expect-pay-to <G...>`, `--expect-amount <USDC>`, and/or `--expect-asset <SAC>` — typically piped from `discover --pick-one --json` via its `expect` block — and the script refuses to sign a 402 whose recipient, price, or asset drifts from the catalog. Without these flags, the server's challenge is trusted; a hostile 402 can set any recipient. Treat `--expect-*` as mandatory in production.
   - `--expect-amount-tolerance <fraction>` — allow small drift (e.g. `0.01` = 1%) for services that quote ranges.
 - ❌ **Don't reuse a credential** — the HMAC binding to amount/currency/recipient is the router's defense against replay.

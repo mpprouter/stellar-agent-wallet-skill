@@ -44,6 +44,16 @@ interface CmdArgs {
   expectAmountTolerance?: number;
 }
 
+/**
+ * Hard upper bound on the session-only `--max-auto` ceiling, in USD.
+ *
+ * Unattended signing is a convenience for scripted pipelines paying
+ * per-call API prices (fractions of a cent to a few cents). Anything
+ * approaching real money should cost a human confirmation, so the flag
+ * refuses values above this cap rather than silently honouring them.
+ */
+export const MAX_AUTO_CEILING_USD = 5;
+
 function parseCmdArgs(rest: string[]): CmdArgs {
   const a: CmdArgs = { method: "GET", json: false, yes: false };
   for (let i = 0; i < rest.length; i++) {
@@ -56,6 +66,21 @@ function parseCmdArgs(rest: string[]): CmdArgs {
       const v = parseFloat(rest[++i]);
       if (!Number.isFinite(v) || v < 0) {
         console.error("--max-auto must be a non-negative number");
+        process.exit(1);
+      }
+      if (v > MAX_AUTO_CEILING_USD) {
+        console.error(
+          `❌ --max-auto $${v.toFixed(2)} exceeds the hard cap of $${MAX_AUTO_CEILING_USD.toFixed(2)}.`,
+        );
+        console.error(
+          "   Unattended signing is capped on purpose: a wide ceiling lets a",
+        );
+        console.error(
+          "   compromised or misconfigured 402 server drain the wallet without",
+        );
+        console.error(
+          "   a single prompt. Lower the value, or confirm each payment manually.",
+        );
         process.exit(1);
       }
       a.maxAutoUsd = v;
@@ -114,41 +139,27 @@ async function promptConfirm(message: string): Promise<boolean> {
   return ans.trim().toLowerCase() === "yes";
 }
 
-async function promptLine(message: string): Promise<string> {
-  const readline = await import("node:readline/promises");
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  const ans = await rl.question(message);
-  rl.close();
-  return ans.trim();
-}
-
 /**
- * Decide whether this payment needs a human confirmation, and offer
- * to enroll the wallet in autopay after the first confirmed mainnet
- * payment.
+ * Decide whether this payment needs a human confirmation.
  *
  * Ordering, least-surprising-first:
  *   1. Testnet or --yes → no prompt.
- *   2. --no-autopay → always prompt (defeats saved ceiling for one call).
- *   3. Explicit --max-auto N → auto-pay if amount ≤ N, else prompt.
- *      Does NOT touch the saved ceiling.
- *   4. Saved autopay-ceiling-usd in secret file → auto-pay if amount ≤ it.
- *   5. No ceiling → prompt. After user confirms, offer to save a
- *      ceiling so future small payments are silent.
+ *   2. Explicit --max-auto N → auto-pay if amount ≤ N, else prompt.
+ *      Session-only: never read from or written to disk.
+ *   3. Otherwise → prompt.
  *
- * Auto-pay always logs `[autopay] $X to G...` to stderr so there is a
- * trail, even when silent.
+ * There is no persistent autopay ceiling. Unattended signing is opt-in
+ * per process, bounded by MAX_AUTO_CEILING_USD, and every auto-signed
+ * payment logs a `[autopay]` line to stderr so there is always a trail.
  */
 async function gateMainnetPayment(opts: {
   amountUsd: number;
   humanAmount: string;
+  payTo: string;
   args: CmdArgs;
   network: "testnet" | "pubnet";
 }): Promise<void> {
-  const { amountUsd, humanAmount, args, network } = opts;
+  const { amountUsd, humanAmount, payTo, args, network } = opts;
 
   if (network !== "pubnet") return;
   if (args.yes) return;
@@ -156,7 +167,9 @@ async function gateMainnetPayment(opts: {
   if (args.maxAutoUsd !== undefined) {
     if (amountUsd <= args.maxAutoUsd) {
       console.error(
-        `[autopay] $${humanAmount} USDC (≤ --max-auto $${args.maxAutoUsd.toFixed(2)})`,
+        `[autopay] $${humanAmount} USDC → ${payTo} auto-signed ` +
+          `(--max-auto $${args.maxAutoUsd.toFixed(2)}, session-only, ` +
+          `no confirmation asked — drop the flag to restore prompts)`,
       );
       return;
     }
@@ -589,6 +602,7 @@ async function runPayFlow(inputs: RunInputs): Promise<void> {
   await gateMainnetPayment({
     amountUsd,
     humanAmount,
+    payTo: challenge.payTo,
     args,
     network: signerConfig.network,
   });
