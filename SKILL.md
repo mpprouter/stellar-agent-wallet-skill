@@ -154,7 +154,11 @@ Because of that, every command prints a one-line reminder on stderr when it load
    Safer: keep it in Stellar CLI key management and pass --identity <name>.
 ```
 
-**Prefer `--identity <name>` for anything beyond throwaway testing.** It delegates key storage to the Stellar CLI, so the secret never needs to exist as a plaintext file in your working directory, and it is the path that benefits from Stellar CLI key-management improvements (including hardware-backed identities) without changes here. The identity path prints no warning. If you do use a plaintext file, treat the wallet as a hot wallet holding only what you can afford to lose.
+**Prefer `--identity <name>` for anything beyond throwaway testing.** It delegates key storage to the Stellar CLI, so the secret never has to exist as a plaintext file in your working directory or in a `.env` alongside your other configuration. The identity path prints no warning.
+
+Be clear about what `--identity` does and does not buy you: the loader calls `stellar keys secret <name>`, so the key is still **exported into this process** to sign. It must therefore be an exportable CLI identity — a hardware-backed identity that refuses to reveal its secret will error, not sign. What you gain is storage hygiene (one managed location, not a file per project, nothing to accidentally commit or sync), not device-held signing. Delegating signing to the CLI or a device is a separate change this skill does not implement today.
+
+If you do use a plaintext file, treat the wallet as a hot wallet holding only what you can afford to lose.
 
 ### Network endpoints contacted
 
