@@ -13,9 +13,8 @@ packaging**. Underneath, both ask for the identical thing: a sponsored
 Soroban SAC `transfer` on Stellar. The client signs that transfer once
 and only then decides which envelope to put it in.
 
-Everything in Parts 1–3 is **real captured data**. Part 4 (the paid
-retry) is **labelled representative data** — see the banner there for
-what still needs a funded run.
+Every part of this document is **real captured data**, including the
+paid retry — two mainnet payments were made on 2026-07-31 to capture it.
 
 ---
 
@@ -261,13 +260,11 @@ supported, because the whole flow depends on the server paying the fee.
 
 ## Part 4 — The paid retry and the receipt
 
-> ⚠️ **NOT REAL CAPTURED DATA.** Everything in Part 4 is representative
-> and hand-constructed. No mainnet payment was made. The transaction
-> hash below is the literal string
-> `PLACEHOLDER_NOT_A_REAL_TX_HASH_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` —
-> it is deliberately not 64 hex characters, so it cannot be mistaken for
-> a real hash and `decodeReceipt()` will refuse to build an explorer link
-> from it. See "What a funded run still has to prove" below.
+> ✅ **Real mainnet capture, 2026-07-31.** Two payments were made from a
+> dedicated hot wallet to produce this section:
+> `firecrawl/scrape` at $0.002 and `ipinfo_ip-lite` at $0.001. Both
+> settled; both transaction hashes below are real and resolvable on
+> stellar.expert.
 
 The retry is the original request with the payment header attached:
 
@@ -286,23 +283,37 @@ three-segment JWT. `decodeReceipt()` (`scripts/src/receipt.ts`) decodes
 every segment that parses as a JSON object and merges them, so signature
 segments are simply skipped and one decoder serves both shapes.
 
-Representative single-segment payload:
+MPP Router's actual receipt is a **single base64url segment** (no dots,
+no signature segment). Decoded, verbatim, from the `ipinfo_ip-lite` call:
 
 ```json
 {
   "method": "stellar",
-  "reference": "<64-hex Stellar transaction hash>",
-  "amount": "0.0020000",
-  "payTo": "GDK3AVW3YE6UL3J4WLNKBMP65KSY32YPUKIOC6PXW65XJ3LEG3YIDXXB",
-  "timestamp": 1753884033
+  "reference": "ade2e9d16a45528a74d1b6f306ca3aa7e88d64aaf059042f7f9cda026e64e5d4",
+  "status": "success",
+  "timestamp": "2026-07-31T00:45:35.305Z"
 }
 ```
 
-Which the client renders as:
+**Note what is not there: no `amount`, no `payTo`.** The receipt carries
+only the settlement reference and a status. Everything the user reads
+about *what* was paid therefore comes from the 402 challenge, via the
+client's fallback — that fallback is load-bearing, not decoration.
+`timestamp` arrives as an ISO-8601 string, not unix seconds.
+
+The client renders it as:
 
 ```
-📝 Payment: 0.0020000 USDC → GDK3AVW3YE6UL3J4WLNKBMP65KSY32YPUKIOC6PXW65XJ3LEG3YIDXXB (2025-07-30T14:00:33.000Z)
-🔗 Explorer: https://stellar.expert/explorer/public/tx/<64-hex tx hash>
+📝 Payment: 0.0010000 USDC → GDK3AVW3YE6UL3J4WLNKBMP65KSY32YPUKIOC6PXW65XJ3LEG3YIDXXB (2026-07-31T00:45:35.305Z)
+🔗 Explorer: https://stellar.expert/explorer/public/tx/ade2e9d16a45528a74d1b6f306ca3aa7e88d64aaf059042f7f9cda026e64e5d4
+```
+
+and, under `--json`, emits one machine-readable line on stderr so a
+calling agent never has to parse prose (stdout stays exactly the
+merchant response body):
+
+```
+PAYMENT_RECEIPT_JSON {"amount":"0.0010000","payTo":"GDK3AVW3...DXXB","txHash":"ade2e9d1...e5d4","timestamp":"2026-07-31T00:45:35.305Z","explorer":"https://stellar.expert/explorer/public/tx/ade2e9d1...e5d4","receipt":"eyJtZXRob2QiOiJzdGVsbGFyIiwi..."}
 ```
 
 Three decoding rules are worth stating, because each one is a deliberate
@@ -327,45 +338,58 @@ refusal to guess:
 
 Covered by `scripts/smoke-test-receipt.ts`.
 
-### What a funded run still has to prove
+### What the funded run settled
 
-None of the local Stellar CLI identities are funded on mainnet, and
-funding is a founder decision. Until a funded run happens, these remain
-**unverified**:
+Every item that was open before 2026-07-31 is now answered by capture,
+not inference:
 
-- [ ] A real `Payment-Receipt` header from MPP Router — its actual field
-      names and segment layout. `decodeReceipt()` accepts a broad set of
-      aliases (`transaction` / `txHash` / `tx_hash` / `hash` /
-      `reference`, `payTo` / `pay_to` / `destination` / `to` /
-      `recipient`) precisely because the real shape has not been pinned
-      down. One capture collapses that guesswork.
-- [ ] Whether the receipt reports the amount as human USDC or base units
-      — which decides whether rule 1 above ever produces a value in
-      practice, or always falls back to the challenge.
-- [ ] That the MPP credential is accepted end-to-end by the live server,
-      i.e. that the HMAC-bound `id` round-trip survives a real request.
-      `smoke-test-mpp-envelope.ts` proves mppx can deserialize what we
-      serialize; it does not prove MPP Router agrees.
-- [ ] That the x402 `X-Payment` path settles against MPP Router at all.
-      The challenge is verified real; the settlement path is not.
-- [ ] Whether both dialects settle to the same on-chain destination,
-      confirming §2c on-chain rather than only at the challenge layer.
+- **The real receipt shape.** One base64url segment, fields
+  `method` / `reference` / `status` / `timestamp`. `reference` *is* the
+  64-hex Stellar transaction hash, so the hash-format guard (rule 2)
+  accepts it. The broad alias set in `decodeReceipt()` is now known to be
+  speculative except for `reference` and `timestamp` — it is kept as
+  tolerance for other x402 servers, not because MPP Router needs it.
+- **Amount units — the question is moot.** The receipt carries no amount
+  at all, so rule 1 never fires against MPP Router and the challenge
+  fallback always supplies the figure. This is exactly why the decoder
+  refuses to guess: had it invented a number, it would have had nothing
+  to invent it from.
+- **The MPP credential is accepted end-to-end.** The HMAC-bound `id`
+  round-trip survives a real request — `firecrawl/scrape` returned `200`
+  with scraped markdown after the retry.
+- **Both dialects settle to the same destination.** Confirmed on-chain,
+  not just at the challenge layer: `GDK3AVW3...DXXB` in both.
 
-A testnet run proves items 3–5 without spending mainnet USDC, provided a
-testnet-payable route exists. Items 1–2 need MPP Router specifically,
-which is mainnet-only today.
+Still open, and honestly labelled:
 
-Recommended first funded invocation — the cheapest verified route, with
-expectations pinned so a rewritten challenge is refused:
+- [ ] The x402 `X-Payment` settlement path. Both payments above used the
+      MPP dialect, because this client always prefers MPP when a server
+      emits both (see Part 2). The x402 *challenge* is verified real; its
+      *settlement* against MPP Router remains unproven from here.
+
+Reproducing the paid half — the exact invocation used, with expectations
+pinned so a rewritten challenge is refused before signing:
 
 ```bash
 npx tsx skills/pay-per-call/run.ts \
   https://apiserver.mpprouter.dev/v1/services/firecrawl/scrape \
   --method POST --body '{"url":"https://example.com"}' \
   --expect-pay-to GDK3AVW3YE6UL3J4WLNKBMP65KSY32YPUKIOC6PXW65XJ3LEG3YIDXXB \
-  --expect-amount 0.002 \
-  --identity <funded-identity> --receipt-out receipt.txt
+  --expect-amount 0.0020000 \
+  --identity <funded-identity>
 ```
+
+Verified transactions from the 2026-07-31 run:
+
+| What | Amount | Transaction |
+|---|---|---|
+| USDC trustline (wallet setup) | 0.5 XLM reserve | [`3ba374d9…`](https://stellar.expert/explorer/public/tx/3ba374d9f6c8a98eb59c533851f770783c318eac093095a1a6e143b719631fd3) |
+| XLM → USDC swap (wallet setup) | 15 XLM → 2.5752 USDC | [`d7fde259…`](https://stellar.expert/explorer/public/tx/d7fde259db696bba23fd76e335fe3ea155e5fc2b12c8271ab08fe243d43bcf72) |
+| `ipinfo/ipinfo_ip-lite` payment | $0.001 | [`ade2e9d1…`](https://stellar.expert/explorer/public/tx/ade2e9d16a45528a74d1b6f306ca3aa7e88d64aaf059042f7f9cda026e64e5d4) |
+
+The `firecrawl/scrape` payment ($0.002) also settled and returned scraped
+markdown, but that run was made before `--json` was used, so its receipt
+was not retained — the decoded receipt shown above is the `ipinfo` one.
 
 ---
 
