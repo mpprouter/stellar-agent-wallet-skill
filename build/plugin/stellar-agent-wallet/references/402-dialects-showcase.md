@@ -14,7 +14,9 @@ Soroban SAC `transfer` on Stellar. The client signs that transfer once
 and only then decides which envelope to put it in.
 
 Every part of this document is **real captured data**, including the
-paid retry — two mainnet payments were made on 2026-07-31 to capture it.
+paid retry. Both dialects were settled on mainnet on 2026-07-31 — the
+x402 half only after fixing three client defects and one server-side
+config bug that had kept that path broken since it was written.
 
 ---
 
@@ -360,12 +362,33 @@ not inference:
 - **Both dialects settle to the same destination.** Confirmed on-chain,
   not just at the challenge layer: `GDK3AVW3...DXXB` in both.
 
-Still open, and honestly labelled:
+**The x402 settlement path — verified 2026-07-31, after fixing three
+defects that had kept it broken since it was written.** It had never
+succeeded against a v2 server. Nothing detected that, because every
+failure mode returns a second `402`, which is indistinguishable from a
+payment the server simply declined:
 
-- [ ] The x402 `X-Payment` settlement path. Both payments above used the
-      MPP dialect, because this client always prefers MPP when a server
-      emits both (see Part 2). The x402 *challenge* is verified real; its
-      *settlement* against MPP Router remains unproven from here.
+1. **Wrong header.** The credential went in `X-Payment`, the pre-v2
+   convention. v2 servers read `Payment-Signature`.
+2. **Wrong envelope.** The v1 shape (`scheme` + `network` at the top
+   level) was sent regardless of version. v2 requires the accepted
+   `PaymentRequirements` echoed back verbatim in `accepted`, and
+   verifies by strict equality against it.
+3. **Signature window too wide.** The client assumed a 5-second ledger
+   while mainnet was closing at ~5.56s, so it signed auth entries valid
+   for 60 ledgers against a verifier ceiling of 57
+   (`invalid_exact_stellar_signature_expiration_too_far`). It now
+   assumes a slower ledger than reality, so its window is always
+   shorter than any verifier's — erring short only ever fails a
+   payment, never misplaces funds.
+
+A fourth was server-side: MPP Router's facilitator used the library's
+default 50,000-stroop fee ceiling while a real mainnet SAC transfer
+simulates at ~141,535, so its accepted fee range was empty and no
+client could have settled regardless (fixed in mpprouter/rozo-mpprouter#21).
+
+With all four resolved, `--dialect x402` settles end to end and returns
+the merchant's response. Both dialects are now proven in production.
 
 Reproducing the paid half — the exact invocation used, with expectations
 pinned so a rewritten challenge is refused before signing:
@@ -385,7 +408,9 @@ Verified transactions from the 2026-07-31 run:
 |---|---|---|
 | USDC trustline (wallet setup) | 0.5 XLM reserve | [`3ba374d9…`](https://stellar.expert/explorer/public/tx/3ba374d9f6c8a98eb59c533851f770783c318eac093095a1a6e143b719631fd3) |
 | XLM → USDC swap (wallet setup) | 15 XLM → 2.5752 USDC | [`d7fde259…`](https://stellar.expert/explorer/public/tx/d7fde259db696bba23fd76e335fe3ea155e5fc2b12c8271ab08fe243d43bcf72) |
-| `ipinfo/ipinfo_ip-lite` payment | $0.001 | [`ade2e9d1…`](https://stellar.expert/explorer/public/tx/ade2e9d16a45528a74d1b6f306ca3aa7e88d64aaf059042f7f9cda026e64e5d4) |
+| `ipinfo/ipinfo_ip-lite` payment (MPP dialect) | $0.001 | [`ade2e9d1…`](https://stellar.expert/explorer/public/tx/ade2e9d16a45528a74d1b6f306ca3aa7e88d64aaf059042f7f9cda026e64e5d4) |
+| `ipinfo/ipinfo_ip-lite` payment (**x402 dialect**) | $0.001 | [`747f5009…`](https://stellar.expert/explorer/public/tx/747f50093549643973c2243ed0afdff531ec1e1c1f98169c3c98831ace10dacc) |
+| `ipinfo/ipinfo_ip-lite` payment (**x402 dialect**) | $0.001 | [`ebde6534…`](https://stellar.expert/explorer/public/tx/ebde65343d3a99a1324e0c7a94c9218a506999fd0ef79068daa3000abe37038d) |
 
 The `firecrawl/scrape` payment ($0.002) also settled and returned scraped
 markdown, but that run was made before `--json` was used, so its receipt
