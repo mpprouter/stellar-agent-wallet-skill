@@ -66,8 +66,9 @@ Conventions worth knowing before you wire this into an autonomous loop:
   out with `--yes`, or with `--max-auto <usd>` which auto-signs only
   below a per-session, hard-capped ceiling ($5). Read the security banner
   in `SKILL.md` before automating that away.
-- `--identity <name>` (a Stellar CLI identity) and `--secret-file <path>`
-  are mutually exclusive; both are shared by every command above.
+- On commands that need a wallet, `--identity <name>` (a Stellar CLI
+  identity) and `--secret-file <path>` are mutually exclusive.
+  `discover` is public and requires neither.
 
 Want to understand the 402 protocol itself rather than the CLI? See
 `references/402-dialects-showcase.md` — a real dual-dialect 402 decoded
