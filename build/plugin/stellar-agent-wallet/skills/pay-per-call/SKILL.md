@@ -67,17 +67,29 @@ failures before any payment credential is signed.
 
 MPP Router is the canonical example: a single 402 response includes
 BOTH the MPP `WWW-Authenticate` header AND the x402 `Payment-Required`
-header, with **different `payTo` addresses** for each dialect. The
-addresses are HMAC-bound to the challenge, so you can't mix them —
-pay the MPP address with an MPP credential, or the x402 address with
-an x402 envelope. Pay the wrong address and the server rejects the
-request while you still eat the on-chain fee.
+header, describing the same charge.
 
-This skill always tries MPP first and uses the MPP address if that
+**Never mix fields between the two challenges.** The MPP challenge `id`
+is HMAC-bound by the server to the whole challenge, so a credential
+assembled from parts of both is rejected — and you still eat the
+on-chain fee. Pay strictly from the one challenge you parsed.
+
+As of a live check on 2026-07-31 the two dialects advertise the *same*
+`payTo` on MPP Router (verified on `firecrawl/scrape`, `exa/search`,
+`parallel/search`, and across all 481 payable catalog entries). Earlier
+revisions of this doc claimed they differ. Don't rely on either
+assumption: always pay the address in the challenge you parsed, and pass
+`--expect-pay-to` / `--expect-amount` from the catalog when you have
+them.
+
+This skill always tries MPP first and uses the MPP challenge if that
 header is present. The x402 `Payment-Required` header is only used
 when the MPP header is absent. If you need to force the x402 path
 for a server that emits both, use a different client — this skill
 doesn't expose a dialect override.
+
+Full decoded walkthrough of a real dual-dialect 402:
+`references/402-dialects-showcase.md`.
 
 ## How to run
 

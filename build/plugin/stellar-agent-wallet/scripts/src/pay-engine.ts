@@ -76,50 +76,60 @@ export async function parse402(res: Response): Promise<ParsedChallenge | null> {
   //    MPP Router emits this alongside the application/problem+json body.
   //    The header value is a base64-encoded x402 envelope
   //    { x402Version, error, accepts: [PaymentRequirements, ...] }.
+  //
+  // NOTE on error handling: the `try` here covers *decoding only*. An
+  // `assertSponsored` failure must NOT be swallowed — a server advertising
+  // `areFeesSponsored: false` is a specific, actionable condition, and
+  // catching it here would degrade a precise "this server is not
+  // compatible" message into a generic "could not parse challenge".
   const paymentRequiredHeader = res.headers.get("payment-required");
   if (paymentRequiredHeader) {
-    try {
-      const decoded = Buffer.from(paymentRequiredHeader, "base64").toString(
-        "utf8",
-      );
-      const body = JSON.parse(decoded);
-      if (body?.accepts?.[0]?.scheme === "exact") {
-        const r = body.accepts[0];
-        assertSponsored(r);
-        return {
-          dialect: "x402",
-          amount: r.amount,
-          asset: r.asset,
-          payTo: r.payTo,
-          maxTimeoutSeconds: r.maxTimeoutSeconds ?? 60,
-          raw: body,
-        };
-      }
-    } catch {
-      // header present but not a decodable x402 envelope — fall through
-    }
+    const body = decodeX402Envelope(paymentRequiredHeader);
+    const parsed = body && toX402Challenge(body);
+    if (parsed) return parsed;
   }
 
   // 3. x402 legacy dialect — envelope inside JSON response body.
+  let body: any = null;
   try {
-    const body: any = await res.clone().json();
-    if (body?.accepts?.[0]?.scheme === "exact") {
-      const r = body.accepts[0];
-      assertSponsored(r);
-      return {
-        dialect: "x402",
-        amount: r.amount,
-        asset: r.asset,
-        payTo: r.payTo,
-        maxTimeoutSeconds: r.maxTimeoutSeconds ?? 60,
-        raw: body,
-      };
-    }
+    body = await res.clone().json();
   } catch {
     // not JSON
   }
+  const parsed = body && toX402Challenge(body);
+  if (parsed) return parsed;
 
   return null;
+}
+
+/** Base64-decode an x402 envelope header; null when it isn't one. */
+function decodeX402Envelope(header: string): any | null {
+  try {
+    return JSON.parse(Buffer.from(header, "base64").toString("utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Narrow an x402 envelope (`{ x402Version, accepts: [...] }`) into a
+ * ParsedChallenge, or null when it carries no `exact` requirement.
+ *
+ * Throws (deliberately) when the requirement is present but declares
+ * unsponsored fees — see the note in `parse402`.
+ */
+function toX402Challenge(body: any): ParsedChallenge | null {
+  const r = body?.accepts?.[0];
+  if (r?.scheme !== "exact") return null;
+  assertSponsored(r);
+  return {
+    dialect: "x402",
+    amount: r.amount,
+    asset: r.asset,
+    payTo: r.payTo,
+    maxTimeoutSeconds: r.maxTimeoutSeconds ?? 60,
+    raw: body,
+  };
 }
 
 /**
