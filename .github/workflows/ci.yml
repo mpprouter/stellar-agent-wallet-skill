@@ -43,12 +43,19 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
+          # No `cache: npm`: this repo deliberately gitignores the root
+          # package-lock.json (only the one shipped inside build/plugin/
+          # is committed, so installs of the published artifact stay
+          # deterministic). Without a lockfile in the tree, the cache
+          # step has nothing to key on and fails outright.
 
-      # `npm ci` installs strictly from package-lock.json — reproducible,
-      # and fails if lockfile and package.json drift.
+      # `npm install`, not `npm ci`, for the same reason: `npm ci`
+      # requires a committed lockfile. Deps are pinned by caret ranges
+      # in package.json, so a breaking upstream minor could in principle
+      # turn CI red without a local change — the tradeoff of the repo's
+      # no-lockfile setup, not something this workflow can fix.
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: Test
         run: npm test
@@ -66,10 +73,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
+          # No `cache: npm`: this repo deliberately gitignores the root
+          # package-lock.json (only the one shipped inside build/plugin/
+          # is committed, so installs of the published artifact stay
+          # deterministic). Without a lockfile in the tree, the cache
+          # step has nothing to key on and fails outright.
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: Rebuild the published plugin artifact
         run: npm run build:all
