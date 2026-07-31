@@ -1,0 +1,96 @@
+name: CI
+
+# Runs on every PR into main and on pushes to main.
+#
+# Two things are guarded here, and the second one is the reason this
+# workflow exists at all:
+#
+#   1. The smoke-test suite (`npm test`) — 402 challenge parsing for both
+#      dialects, MPP envelope round-tripping, receipt decoding, signing,
+#      and the plaintext-key warning. These are pure/offline checks; the
+#      one test that touches the network signs against testnet and moves
+#      no real funds.
+#
+#   2. `build/plugin/` being in sync with source. That directory is the
+#      artifact users actually install via `/plugin marketplace add`, and
+#      on 2026-07-31 it was found stale: it still carried code removed
+#      weeks earlier, so anyone installing through the documented path
+#      got a version WITHOUT the security fixes that had been merged.
+#      Source-only review cannot catch that — nothing about a correct
+#      diff to `scripts/` reveals that the shipped artifact still holds
+#      the old behaviour. So CI rebuilds and fails if the result differs
+#      from what was committed.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Cancel superseded runs on the same ref to save minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (committed files only)
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      # `npm ci` installs strictly from package-lock.json — reproducible,
+      # and fails if lockfile and package.json drift.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+  # Separate job: a stale artifact is a distinct failure from a failing
+  # test, and naming it separately makes the required fix obvious from
+  # the checks list alone ("run npm run build:all and commit").
+  plugin-artifact-in-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (committed files only)
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Rebuild the published plugin artifact
+        run: npm run build:all
+
+      # The build regenerates the artifact's package-lock.json with
+      # whatever npm version the runner has, which is noise rather than
+      # drift — restore it before diffing so this check stays honest
+      # about what it is asserting.
+      - name: Ignore lockfile churn inside the artifact
+        run: git checkout -- 'build/plugin/**/package-lock.json' || true
+
+      - name: Fail if the committed artifact differs from source
+        run: |
+          if ! git diff --quiet -- build/ .claude-plugin/; then
+            echo "::error::build/ is out of sync with source."
+            echo "The plugin artifact is what users install via '/plugin marketplace add'."
+            echo "A stale artifact ships them code WITHOUT the changes in this PR."
+            echo ""
+            echo "Fix: run 'npm run build:all' and commit the result."
+            echo ""
+            git diff --stat -- build/ .claude-plugin/
+            exit 1
+          fi
+          echo "Plugin artifact matches source."
