@@ -8,6 +8,7 @@
  * Usage:
  *   npx tsx skills/pay-per-call/run.ts <url> [--method POST] [--body '{}'] [--yes]
  *                                        [--max-auto <usd>] [--receipt-out <path>]
+ *                                        [--dialect mpp|x402]
  *                                        [--json] [base flags]
  *
  * Base flags: --secret-file, --network, --rpc-url (see cli-config.ts)
@@ -37,6 +38,8 @@ interface CmdArgs {
   /** Session-only autopay ceiling. Payments ≤ this amount are signed without prompting. Not persisted. */
   maxAutoUsd?: number;
   receiptOut?: string;
+  /** Force a 402 dialect when the server offers both. Default: prefer MPP. */
+  dialect?: "mpp" | "x402";
   /** Expected 402 challenge fields. Any mismatch aborts before signing. */
   expectPayTo?: string;
   expectAsset?: string;
@@ -85,6 +88,14 @@ function parseCmdArgs(rest: string[]): CmdArgs {
       }
       a.maxAutoUsd = v;
     } else if (k === "--receipt-out") a.receiptOut = rest[++i];
+    else if (k === "--dialect") {
+      const v = rest[++i];
+      if (v !== "mpp" && v !== "x402") {
+        console.error(`--dialect must be "mpp" or "x402" (got ${v ?? "nothing"})`);
+        process.exit(1);
+      }
+      a.dialect = v;
+    }
     else if (k === "--expect-pay-to") a.expectPayTo = rest[++i];
     else if (k === "--expect-asset") a.expectAsset = rest[++i];
     else if (k === "--expect-amount") a.expectAmountUsdc = rest[++i];
@@ -549,7 +560,9 @@ async function runPayFlow(inputs: RunInputs): Promise<void> {
     return;
   }
 
-  const challenge: ParsedChallenge | null = await parse402(res);
+  const challenge: ParsedChallenge | null = await parse402(res, {
+    prefer: args.dialect,
+  });
   if (!challenge) {
     console.error("❌ Got 402 but could not parse challenge.");
     console.error("   Body:", await res.text());
@@ -557,7 +570,9 @@ async function runPayFlow(inputs: RunInputs): Promise<void> {
   }
 
   const humanAmount = baseUnitsToUsdc(challenge.amount);
-  console.error(`💸 Payment required (${challenge.dialect})`);
+  console.error(
+    `💸 Payment required (${challenge.dialect}${args.dialect ? ", forced by --dialect" : ""})`,
+  );
   console.error(`   Amount: ${humanAmount} USDC`);
   console.error(`   To:     ${challenge.payTo}`);
   console.error(`   Asset:  ${challenge.asset}`);

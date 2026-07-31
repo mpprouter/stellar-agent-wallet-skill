@@ -43,7 +43,18 @@ export interface ParsedChallenge {
  *
  * See skills/pay-per-call/SKILL.md for the rationale.
  */
-export async function parse402(res: Response): Promise<ParsedChallenge | null> {
+export async function parse402(
+  res: Response,
+  opts: { prefer?: "mpp" | "x402" } = {},
+): Promise<ParsedChallenge | null> {
+  // Dialect override. MPP Router emits both dialects in one 402, and
+  // the default preference below means the x402 branch is never taken
+  // against it — which left the x402 *settlement* path unexercised in
+  // production even though its challenge parsing was covered. Passing
+  // `prefer: "x402"` skips the MPP branch so that path can be proven.
+  // Anything other than an explicit "x402" keeps the historical order.
+  const skipMpp = opts.prefer === "x402";
+
   // 1. MPP dialect — WWW-Authenticate: Payment <auth-params>.
   //
   // Delegated to `mppx.Challenge.deserialize`. It walks the full RFC 7235
@@ -52,7 +63,7 @@ export async function parse402(res: Response): Promise<ParsedChallenge | null> {
   // structured values, and runs zod validation via Challenge.Schema.
   // On success we hand the resulting `Challenge` directly to the
   // credential serializer, so the HMAC-bound `id` round-trips byte-for-byte.
-  const wwwAuth = res.headers.get("www-authenticate");
+  const wwwAuth = skipMpp ? null : res.headers.get("www-authenticate");
   if (wwwAuth) {
     try {
       const mppChallenge = mppx.Challenge.deserialize(wwwAuth);
@@ -158,8 +169,35 @@ export async function buildRetryHeaders(params: {
     const caip2 =
       signerConfig.network === "pubnet" ? "stellar:pubnet" : "stellar:testnet";
     const x402Version = (challenge.raw as any)?.x402Version ?? 1;
-    const payload = wrapX402(signed.transactionXdr, caip2, x402Version);
-    headers.set("X-Payment", encodeX402Header(payload));
+    // v2 verifies by strict equality against the requirement the agent
+    // accepted, so echo back the exact object from the challenge.
+    const accepted = (challenge.raw as any)?.accepts?.[0];
+    const payload = wrapX402(
+      signed.transactionXdr,
+      caip2,
+      x402Version,
+      accepted,
+    );
+    const encoded = encodeX402Header(payload);
+
+    // Which header carries the credential changed between x402
+    // versions, and sending the wrong one is silent: the server simply
+    // does not see a credential and answers 402 again, which reads like
+    // a rejected payment rather than a misaddressed one.
+    //
+    //   v2+ → `Payment-Signature: <base64>`, no scheme prefix. This is
+    //         what @x402/core's encodePaymentSignatureHeader emits and
+    //         what MPP Router reads (see its proxy.ts credential
+    //         resolution).
+    //   v1  → `X-Payment: <base64>`, the pre-v2 convention.
+    //
+    // Verified against MPP Router on 2026-07-31: it advertises
+    // x402Version 2 and ignores X-Payment entirely.
+    if (x402Version >= 2) {
+      headers.set("Payment-Signature", encoded);
+    } else {
+      headers.set("X-Payment", encoded);
+    }
   } else {
     headers.set(
       "Authorization",
