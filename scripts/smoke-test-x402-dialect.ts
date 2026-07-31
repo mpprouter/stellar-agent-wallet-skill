@@ -115,20 +115,57 @@ async function main() {
     "both dialects describe the same inner transfer",
   );
 
-  // 3. x402Version round-trips into the payload (v2 must not become v1).
-  console.log("[x402-smoke] X-Payment envelope");
+  // 3. The v2 credential envelope. The shape differs from v1, and
+  //    getting it wrong fails silently — the server cannot parse the
+  //    credential and answers 402 again, which reads like a rejected
+  //    payment rather than a misaddressed one. MPP Router rejected
+  //    every v1-shaped credential we sent until 2026-07-31.
+  console.log("[x402-smoke] v2 credential envelope");
   const version = (hdr!.raw as any).x402Version;
   assert(version === 2, "captured envelope is x402Version 2");
+  const accepted = (hdr!.raw as any).accepts[0];
   const encoded = encodeX402Header(
-    wrapX402("AAAAAgAAAAA=", "stellar:pubnet", version),
+    wrapX402("AAAAAgAAAAA=", "stellar:pubnet", version, accepted),
   );
   const roundTrip = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
-  assert(roundTrip.x402Version === 2, "X-Payment preserves x402Version 2");
-  assert(roundTrip.scheme === "exact", "X-Payment scheme is exact");
-  assert(roundTrip.network === "stellar:pubnet", "X-Payment network is CAIP-2");
+  assert(roundTrip.x402Version === 2, "v2 credential preserves x402Version 2");
   assert(
     roundTrip.payload.transaction === "AAAAAgAAAAA=",
-    "X-Payment carries the signed XDR",
+    "v2 credential carries the signed XDR",
+  );
+  // v2 verifies by strict equality against the requirement the agent
+  // accepted, so it must be echoed back verbatim — not reconstructed.
+  assert(
+    roundTrip.accepted?.payTo === accepted.payTo &&
+      roundTrip.accepted?.asset === accepted.asset &&
+      roundTrip.accepted?.scheme === "exact",
+    "v2 credential echoes the accepted PaymentRequirements verbatim",
+  );
+  assert(
+    roundTrip.scheme === undefined && roundTrip.network === undefined,
+    "v2 credential does not carry the v1 top-level scheme/network",
+  );
+
+  // 3b. v1 keeps the old shape, and v2 refuses to build without the
+  //     requirement it must echo rather than emitting something the
+  //     server will silently drop.
+  const v1 = JSON.parse(
+    Buffer.from(
+      encodeX402Header(wrapX402("AAAAAgAAAAA=", "stellar:pubnet", 1)),
+      "base64",
+    ).toString("utf8"),
+  );
+  assert(v1.scheme === "exact" && v1.network === "stellar:pubnet",
+    "v1 credential keeps the top-level scheme/network shape");
+  let refusedBadV2 = false;
+  try {
+    wrapX402("AAAAAgAAAAA=", "stellar:pubnet", 2);
+  } catch {
+    refusedBadV2 = true;
+  }
+  assert(
+    refusedBadV2,
+    "v2 without accepted throws instead of emitting a bad envelope",
   );
 
   // 4. Legacy dialect — envelope in the JSON body, no headers at all.
