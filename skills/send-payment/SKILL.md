@@ -119,7 +119,7 @@ Terminal statuses:
 
 ## API reference
 
-From `/Users/happyfish/workspace/agenttools/rozo-intents-skills/references/api-reference.md`:
+From `~/workspace/agenttools/rozo-intents-skills/references/api-reference.md`:
 
 - **Base URL**: `https://intentapiv4.rozo.ai/functions/v1/payment-api`
 - **Auth**: none (public, rate-limited)
