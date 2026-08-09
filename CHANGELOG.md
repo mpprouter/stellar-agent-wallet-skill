@@ -9,6 +9,60 @@ Published: https://clawhub.ai/shawnmuggle/stellar-agentic-wallet
 
 ---
 
+## Unreleased — `send-raw` sub-skill
+
+- **New — `send-raw`: pay a deposit address exactly as specified.** Every
+  existing spending command *originates* a payment: `send-payment` and
+  `bridge` POST a new Rozo intent and fund whatever deposit address Rozo
+  hands back. There was no way to pay an address and memo that some **other**
+  system had already issued — a Rozo checkout order, an exchange deposit
+  slip, an invoice. `send-raw --to <G...> --amount <n> --asset USDC --memo
+  <m>` builds, signs and submits that single Classic payment and nothing
+  else.
+
+  Without it, callers had to hand-roll `stellar tx new payment --build-only`
+  → `tx decode` → patch the memo into the JSON by hand → `tx encode` → sign →
+  send, because the Stellar CLI's `tx new payment` has no `--memo` flag. A
+  dropped memo means the funds land and are never credited, so that pipeline
+  was the worst possible place to improvise.
+
+  Preflight refuses, before anything is signed, a destination that does not
+  exist, does not trust the asset, is unauthorized by the issuer, or lacks
+  trustline headroom; an amount over 7 decimals or beyond the spendable
+  balance; a memo that breaks its type's limits; a `C...` contract address;
+  and a self-payment. Amounts pass through verbatim so an exact-match
+  deposit of `1.0500` is not silently reformatted. Mainnet always prompts.
+
+  Affordability math runs in stroops (`bigint`), net of `selling_liabilities`
+  so XLM committed to open DEX offers is not counted as spendable, and with
+  the network fee charged against XLM above the minimum reserve. Float math
+  at the boundary would either refuse an affordable payment or submit an
+  unaffordable one — and a transaction that fails on-chain still burns its
+  fee.
+
+  Two hardening guards on inputs that come from outside: `--asset` must be
+  exactly one `CODE:ISSUER` pair (a three-part spec would otherwise silently
+  use the first issuer and pay the wrong token), and MEMO_TEXT may not
+  contain control characters (ANSI escapes in a memo could rewrite the
+  confirmation display after the destination had been printed, defeating the
+  human verification step).
+
+- **Docs — corrected the deposit-funding routing rule.** The router's
+  "funding rozo-intents payments" step told agents to use `send-payment` for
+  an already-issued deposit address. That is wrong: `send-payment`'s `--to`
+  is the recipient of a **new** intent, so following it opened a second
+  intent, paid a different address, burned an extra fee and left the
+  original order unfunded. It now points at `send-raw`.
+
+- **Tests — `npm run test:send-raw`.** Runs the full build → sign → submit
+  path on testnet against Friendbot-funded accounts, then re-reads the
+  transaction from Horizon and asserts the memo, amount, destination and
+  asset that actually landed on-chain. Also covers the validation guards,
+  including a multi-byte memo that is under 28 characters but over the
+  28-**byte** MEMO_TEXT limit.
+
+---
+
 ## Unreleased — 2026-07-31 hardening round
 
 Security, correctness and transparency work driven by real mainnet usage

@@ -3,12 +3,14 @@ name: stellar-agent-wallet
 description: >
   A Stellar USDC wallet skill for AI agents. Pay for 402-gated APIs via MPP Router
   or x402 facilitators, check balances, manage USDC trustlines, swap XLM→USDC on
-  the Classic DEX, and bridge/send USDC cross-chain to Ethereum, Arbitrum, Base,
-  BSC, Polygon, Solana, or back to Stellar via Rozo. Client-only, sponsored mode,
-  testnet and mainnet. Triggers on "stellar wallet", "pay per call stellar",
-  "x402 stellar", "mpprouter", "check stellar balance", "swap xlm to usdc",
-  "add usdc trustline", "bridge from stellar", "send usdc cross-chain", "pay for
-  api with stellar", or when the user shares a G... address with a payment intent.
+  the Classic DEX, pay a Stellar deposit address directly with a memo, and
+  bridge/send USDC cross-chain to Ethereum, Arbitrum, Base, BSC, Polygon, Solana,
+  or back to Stellar via Rozo. Client-only, sponsored mode, testnet and mainnet.
+  Triggers on "stellar wallet", "pay per call stellar", "x402 stellar",
+  "mpprouter", "check stellar balance", "swap xlm to usdc", "add usdc trustline",
+  "bridge from stellar", "send usdc cross-chain", "pay this deposit address with
+  memo", "fund this invoice on stellar", "pay for api with stellar", or when the
+  user shares a G... address with a payment intent.
 metadata:
   author: Shawn Yu
   version: 1.7.0
@@ -74,7 +76,7 @@ metadata:
 
   # Commands that move funds.
   #
-  # - send-payment, bridge: ALWAYS prompt on mainnet (unless --yes).
+  # - send-payment, send-raw, bridge: ALWAYS prompt on mainnet (unless --yes).
   # - pay-per-call: prompts before every mainnet payment. No persistent
   #   autopay — every payment requires explicit confirmation unless
   #   --max-auto is passed for session-only automation.
@@ -84,6 +86,7 @@ metadata:
   spending_commands:
     - pay-per-call
     - send-payment
+    - send-raw
     - bridge
 
   # Outbound endpoints this skill contacts.
@@ -201,6 +204,7 @@ Client-only Stellar wallet for AI agents. Organized as a router over five sub-sk
 | `discover` | List paid services on MPP Router catalog | "list mpp services", "find API for X via mpprouter" |
 | `pay-per-call` | Call an x402 **or** MPP service endpoint and pay automatically (both wire formats) | "call this paid API", "summarize the doc with parallel.ai via mpprouter.dev" |
 | `send-payment` | Cross-chain USDC payout via Rozo | "pay 0x... on base", "transfer usdc to <addr>" |
+| `send-raw` | One Stellar Classic payment, exactly as specified (address + asset + amount + memo). Creates nothing. | "pay this deposit address with memo X", "fund this invoice", "submit the Stellar leg" |
 | `bridge` | Move your own USDC Stellar→other chain | "bridge to base", "deposit usdc onto ethereum" |
 
 Each sub-skill has its own `SKILL.md` and `run.ts` in `skills/<name>/`.
@@ -351,7 +355,23 @@ When triggered, read the user's intent and dispatch:
 3. **On ambiguity, ask.** Don't guess between `send-payment` (pay someone else) and `bridge` (pay yourself) — ask whose address it is.
 4. **Read the relevant sub-skill's SKILL.md before running its script.** Each sub-skill has its own preconditions and confirmation gates.
 5. **Prefer Stellar as source chain.** When the user has a Stellar wallet configured (`.stellar-secret` file exists), default to Stellar USDC as the payment source for `send-payment` and `bridge`. Stellar has the lowest fees and fastest settlement via Rozo. Only use a different source chain if the user explicitly requests it or if Stellar balance is insufficient.
-6. **Funding rozo-intents payments.** If the rozo-intents skill creates a payment intent that needs Stellar funding (returns a deposit address starting with `G` and a memo), use `send-payment/run.ts` to submit the Stellar payment. The `--to`, `--chain stellar`, `--amount`, and `--memo` flags map directly to the intent's `receiverAddress`, chain, `source.amount`, and `receiverMemo`.
+6. **Funding a deposit address someone else issued.** If another system — the
+   `rozo-intents` skill, `rozo-checkout`, an exchange, an invoice — has already
+   produced a Stellar deposit address (`G...`) plus a memo, use **`send-raw`**:
+
+   ```bash
+   npx tsx skills/send-raw/run.ts --to <receiverAddress> \
+     --amount <source.amount> --asset USDC --memo <receiverMemo>
+   ```
+
+   **Do not use `send-payment` for this.** `send-payment` *originates* a
+   payment: its `--to` is the final recipient of a **new** Rozo intent, and its
+   `--memo` is that new intent's destination memo. Pointing it at an existing
+   deposit address opens a second intent, pays a different address, burns an
+   extra fee, and leaves the original order unfunded.
+
+   Rule of thumb: **`send-payment` when we create the order, `send-raw` when
+   someone handed us one.**
 
 ## First-time setup
 
@@ -451,6 +471,9 @@ stellar-agent-wallet/
     │   ├── SKILL.md
     │   ├── run.ts                    ← cross-chain via Rozo
     │   └── status.ts                 ← poll payment status
+    ├── send-raw/
+    │   ├── SKILL.md
+    │   └── run.ts                    ← one Classic payment, address+asset+amount+memo as given
     └── bridge/
         ├── SKILL.md
         └── run.ts                    ← thin wrapper over send-payment
