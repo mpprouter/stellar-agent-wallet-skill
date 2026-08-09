@@ -9,6 +9,45 @@ Published: https://clawhub.ai/shawnmuggle/stellar-agentic-wallet
 
 ---
 
+## Unreleased — `send-raw` sub-skill
+
+- **New — `send-raw`: pay a deposit address exactly as specified.** Every
+  existing spending command *originates* a payment: `send-payment` and
+  `bridge` POST a new Rozo intent and fund whatever deposit address Rozo
+  hands back. There was no way to pay an address and memo that some **other**
+  system had already issued — a Rozo checkout order, an exchange deposit
+  slip, an invoice. `send-raw --to <G...> --amount <n> --asset USDC --memo
+  <m>` builds, signs and submits that single Classic payment and nothing
+  else.
+
+  Without it, callers had to hand-roll `stellar tx new payment --build-only`
+  → `tx decode` → patch the memo into the JSON by hand → `tx encode` → sign →
+  send, because the Stellar CLI's `tx new payment` has no `--memo` flag. A
+  dropped memo means the funds land and are never credited, so that pipeline
+  was the worst possible place to improvise.
+
+  Preflight refuses, before anything is signed, a destination that does not
+  exist or does not trust the asset, an amount over 7 decimals or over the
+  balance, a memo that breaks its type's limits, a `C...` contract address,
+  and a self-payment. Amounts pass through verbatim so an exact-match
+  deposit of `1.0500` is not silently reformatted. Mainnet always prompts.
+
+- **Docs — corrected the deposit-funding routing rule.** The router's
+  "funding rozo-intents payments" step told agents to use `send-payment` for
+  an already-issued deposit address. That is wrong: `send-payment`'s `--to`
+  is the recipient of a **new** intent, so following it opened a second
+  intent, paid a different address, burned an extra fee and left the
+  original order unfunded. It now points at `send-raw`.
+
+- **Tests — `npm run test:send-raw`.** Runs the full build → sign → submit
+  path on testnet against Friendbot-funded accounts, then re-reads the
+  transaction from Horizon and asserts the memo, amount, destination and
+  asset that actually landed on-chain. Also covers the validation guards,
+  including a multi-byte memo that is under 28 characters but over the
+  28-**byte** MEMO_TEXT limit.
+
+---
+
 ## Unreleased — 2026-07-31 hardening round
 
 Security, correctness and transparency work driven by real mainnet usage
