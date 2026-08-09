@@ -31,6 +31,7 @@ import {
   normalizeAmount,
   resolveMemo,
   resolveAsset,
+  toStroops,
   type CmdArgs,
 } from "../skills/send-raw/run.js";
 import type { BaseConfig } from "./src/cli-config.js";
@@ -145,6 +146,43 @@ async function testValidationGuards(): Promise<void> {
     () => resolveAsset("EURC:not-a-key", "testnet"),
     "not a valid Stellar public key",
   );
+  await expectReject(
+    // Destructuring a 3-way split would silently use the first issuer and
+    // pay the wrong token, irreversibly.
+    "asset spec with an extra component is rejected",
+    () =>
+      resolveAsset(
+        "EURC:GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+        "testnet",
+      ),
+    "not understood",
+  );
+  await expectReject(
+    // The confirmation prompt is the last human check; a memo carrying ANSI
+    // escapes could rewrite it after the destination has been printed.
+    "MEMO_TEXT with ANSI escapes is rejected",
+    () => resolveMemo("ok\u001b[2J\u001b[Hevil", "text"),
+    "control characters",
+  );
+  await expectReject(
+    "MEMO_TEXT with a bare newline is rejected",
+    () => resolveMemo("line1\nline2", "text"),
+    "control characters",
+  );
+
+  // Stroop conversion must be exact — float math at the boundary either
+  // refuses an affordable payment or submits an unaffordable one.
+  const stroopCases: Array<[string, bigint]> = [
+    ["1.0500", 10_500_000n],
+    ["0.0000001", 1n],
+    ["1", 10_000_000n],
+    ["123.4567891", 1_234_567_891n],
+  ];
+  for (const [input, want] of stroopCases) {
+    const got = toStroops(input);
+    if (got !== want) fail(`toStroops("${input}") = ${got}, want ${want}`);
+  }
+  log("  ✓ stroop conversion is exact");
 
   // A 28-byte multi-byte memo is exactly at the limit and must be accepted.
   const boundary = "字".repeat(9) + "x"; // 27 + 1 = 28 bytes

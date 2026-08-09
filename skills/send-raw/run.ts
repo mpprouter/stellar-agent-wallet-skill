@@ -127,11 +127,21 @@ export async function resolveAsset(
   if (s.toUpperCase() === "USDC") {
     return new Asset("USDC", CLASSIC_USDC_ISSUERS[network]);
   }
-  const [code, issuer] = s.split(":");
-  if (!code || !issuer) {
+  // Exactly two components. Destructuring a longer split would silently
+  // ignore the tail, so "EURC:ISSUER_A:ISSUER_B" would pay ISSUER_A's asset —
+  // the wrong token, irreversibly, from a flag the user believed was explicit.
+  const parts = s.split(":");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
     throw new Error(
       `--asset "${spec}" not understood. Use XLM, USDC, or CODE:ISSUER ` +
         `(e.g. EURC:GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2).`,
+    );
+  }
+  const [code, issuer] = parts;
+  if (!/^[A-Za-z0-9]{1,12}$/.test(code)) {
+    throw new Error(
+      `--asset code "${code}" is not a valid Stellar asset code ` +
+        `(1-12 alphanumeric characters).`,
     );
   }
   if (!StrKey.isValidEd25519PublicKey(issuer)) {
@@ -176,6 +186,17 @@ export async function resolveMemo(
 
   switch (type) {
     case "text": {
+      // Memos routinely arrive from an external system (a checkout order, an
+      // exchange deposit slip). The confirmation prompt is the human's last
+      // chance to verify the destination, so a memo carrying ANSI escapes or
+      // control characters could scroll or rewrite that display after the
+      // destination has been printed. No legitimate deposit memo needs them.
+      if (/[\u0000-\u001f\u007f-\u009f]/.test(value)) {
+        throw new Error(
+          "MEMO_TEXT contains control characters. These can rewrite the " +
+            "confirmation display and hide what is actually being signed.",
+        );
+      }
       const bytes = Buffer.byteLength(value, "utf8");
       if (bytes > MEMO_TEXT_MAX_BYTES) {
         throw new Error(
@@ -210,13 +231,50 @@ export interface Preflight {
   spendableXlm: string;
 }
 
+/** One XLM = 10,000,000 stroops. */
+const STROOPS_PER_UNIT = 10_000_000n;
+
+/** Base reserve (1 XLM) + 0.5 XLM per subentry, in stroops. */
+const BASE_RESERVE_STROOPS = 10_000_000n;
+const PER_SUBENTRY_STROOPS = 5_000_000n;
+
+/** Network fee for a 1-operation transaction, in stroops (BASE_FEE = 100). */
+const FEE_STROOPS = 100n;
+
+/**
+ * Convert a Stellar decimal amount string to stroops, exactly.
+ *
+ * All affordability math runs in stroops. Doing it in JS floats invites
+ * classic binary-fraction errors — `0.1 + 0.2 > 0.3` is true — which at the
+ * boundary means either refusing a payment the wallet can afford or, worse,
+ * submitting one it cannot. A transaction that fails on-chain still burns
+ * its fee.
+ */
+export function toStroops(amount: string): bigint {
+  const [whole, frac = ""] = amount.trim().split(".");
+  return BigInt(whole || "0") * STROOPS_PER_UNIT + BigInt(frac.padEnd(7, "0").slice(0, 7));
+}
+
+function fromStroops(stroops: bigint): string {
+  const neg = stroops < 0n;
+  const abs = neg ? -stroops : stroops;
+  const whole = abs / STROOPS_PER_UNIT;
+  const frac = (abs % STROOPS_PER_UNIT).toString().padStart(7, "0");
+  return `${neg ? "-" : ""}${whole}.${frac}`;
+}
+
 /**
  * Read both accounts before building anything.
  *
  * Every check here maps to a Horizon rejection we would otherwise only
  * discover after signing: op_no_destination (dest missing), op_no_trust
- * (dest has no trustline), op_underfunded (source short), tx_insufficient_fee
- * / below-reserve (no spendable XLM for the fee).
+ * (dest has no trustline or it is unauthorized), op_line_full (destination
+ * at its trustline limit), op_underfunded (source short), and the
+ * below-reserve failures for the XLM fee.
+ *
+ * Balances are read net of `selling_liabilities` — XLM or tokens already
+ * committed to open DEX offers are not spendable, and Horizon reports the
+ * gross balance.
  */
 export async function preflight(
   base: BaseConfig,
@@ -253,21 +311,50 @@ export async function preflight(
     );
   }
 
-  const xlmLine = sourceAccount.balances.find((b: any) => b.asset_type === "native");
-  const reserveXlm = 1 + 0.5 * sourceAccount.subentry_count;
-  const spendableXlm = (Number(xlmLine?.balance ?? "0") - reserveXlm).toFixed(7);
-
-  if (Number(sourceLine.balance) < Number(amount)) {
+  // A trustline can exist but be unauthorized by the issuer, in which case
+  // the payment fails with op_src_not_authorized.
+  if (!asset.isNative() && (sourceLine as any).is_authorized === false) {
     throw new Error(
-      `Insufficient ${assetLabel(asset)}: need ${amount}, wallet holds ${sourceLine.balance}.`,
+      `Source wallet's ${assetLabel(asset)} trustline is not authorized by the issuer.`,
     );
   }
+
+  const xlmLine: any = sourceAccount.balances.find((b: any) => b.asset_type === "native");
+  const reserveStroops =
+    BASE_RESERVE_STROOPS + PER_SUBENTRY_STROOPS * BigInt(sourceAccount.subentry_count);
+  const xlmStroops = toStroops(xlmLine?.balance ?? "0");
+  const xlmSellingLiabilities = toStroops(xlmLine?.selling_liabilities ?? "0");
+  const spendableXlmStroops = xlmStroops - reserveStroops - xlmSellingLiabilities;
+  const spendableXlm = fromStroops(spendableXlmStroops);
+
+  const amountStroops = toStroops(amount);
+  const assetSellingLiabilities = toStroops((sourceLine as any).selling_liabilities ?? "0");
+  const availableStroops = toStroops(sourceLine.balance) - assetSellingLiabilities;
+
+  // XLM is the only asset where the amount and the fee come out of the same
+  // pot, and it is also the only one constrained by the minimum reserve.
+  const neededStroops = asset.isNative() ? amountStroops + FEE_STROOPS : amountStroops;
+  const affordableStroops = asset.isNative() ? spendableXlmStroops : availableStroops;
+
+  if (affordableStroops < neededStroops) {
+    const liabilityNote =
+      assetSellingLiabilities > 0n || (asset.isNative() && xlmSellingLiabilities > 0n)
+        ? ` (some is reserved by open DEX offers)`
+        : "";
+    throw new Error(
+      `Insufficient ${assetLabel(asset)}: need ${fromStroops(neededStroops)}` +
+        `${asset.isNative() ? " including the network fee" : ""}, ` +
+        `wallet has ${fromStroops(affordableStroops)} available${liabilityNote}.`,
+    );
+  }
+
   // The fee is paid in XLM regardless of which asset is being sent, and it
   // cannot dip into the account's minimum reserve.
-  if (Number(spendableXlm) <= 0) {
+  if (spendableXlmStroops < FEE_STROOPS) {
     throw new Error(
-      `No spendable XLM to pay the network fee (balance ${xlmLine?.balance ?? "0"}, ` +
-        `reserve ${reserveXlm.toFixed(7)}). Top up XLM before sending.`,
+      `Not enough spendable XLM to pay the network fee (balance ` +
+        `${xlmLine?.balance ?? "0"}, reserve ${fromStroops(reserveStroops)}, ` +
+        `spendable ${spendableXlm}). Top up XLM before sending.`,
     );
   }
 
@@ -275,7 +362,33 @@ export async function preflight(
   let destTrustsAsset = false;
   try {
     const destAccount = await horizon.loadAccount(destination);
-    destTrustsAsset = asset.isNative() || destAccount.balances.some(matches);
+    if (asset.isNative()) {
+      destTrustsAsset = true;
+    } else {
+      const destLine: any = destAccount.balances.find(matches);
+      if (destLine) {
+        if (destLine.is_authorized === false) {
+          throw new Error(
+            `Destination's ${assetLabel(asset)} trustline is not authorized by the issuer ` +
+              `— the payment would fail with op_not_authorized.`,
+          );
+        }
+        // A trustline has a ceiling. Exceeding it fails with op_line_full.
+        if (destLine.limit) {
+          const headroom =
+            toStroops(destLine.limit) -
+            toStroops(destLine.balance) -
+            toStroops(destLine.buying_liabilities ?? "0");
+          if (headroom < amountStroops) {
+            throw new Error(
+              `Destination cannot receive ${amount} ${asset.getCode()} — its trustline ` +
+                `has only ${fromStroops(headroom)} of headroom left (op_line_full).`,
+            );
+          }
+        }
+        destTrustsAsset = true;
+      }
+    }
   } catch (err: any) {
     if (err?.response?.status === 404) destExists = false;
     else throw err;

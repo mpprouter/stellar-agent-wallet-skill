@@ -27,10 +27,25 @@ Published: https://clawhub.ai/shawnmuggle/stellar-agentic-wallet
   was the worst possible place to improvise.
 
   Preflight refuses, before anything is signed, a destination that does not
-  exist or does not trust the asset, an amount over 7 decimals or over the
-  balance, a memo that breaks its type's limits, a `C...` contract address,
+  exist, does not trust the asset, is unauthorized by the issuer, or lacks
+  trustline headroom; an amount over 7 decimals or beyond the spendable
+  balance; a memo that breaks its type's limits; a `C...` contract address;
   and a self-payment. Amounts pass through verbatim so an exact-match
   deposit of `1.0500` is not silently reformatted. Mainnet always prompts.
+
+  Affordability math runs in stroops (`bigint`), net of `selling_liabilities`
+  so XLM committed to open DEX offers is not counted as spendable, and with
+  the network fee charged against XLM above the minimum reserve. Float math
+  at the boundary would either refuse an affordable payment or submit an
+  unaffordable one — and a transaction that fails on-chain still burns its
+  fee.
+
+  Two hardening guards on inputs that come from outside: `--asset` must be
+  exactly one `CODE:ISSUER` pair (a three-part spec would otherwise silently
+  use the first issuer and pay the wrong token), and MEMO_TEXT may not
+  contain control characters (ANSI escapes in a memo could rewrite the
+  confirmation display after the destination had been printed, defeating the
+  human verification step).
 
 - **Docs — corrected the deposit-funding routing rule.** The router's
   "funding rozo-intents payments" step told agents to use `send-payment` for

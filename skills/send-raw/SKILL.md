@@ -102,14 +102,27 @@ rejections surface as plain English *before* a signature exists:
 | Check | Failure it prevents |
 |---|---|
 | Source account exists and is funded | `tx_no_source_account` |
-| Source holds the asset (trustline present) | `op_no_trust` on the source side |
-| Source balance ≥ amount | `op_underfunded` |
-| Spendable XLM > 0 after the minimum reserve | fee cannot be paid |
+| Source holds the asset (trustline present and authorized) | `op_no_trust`, `op_src_not_authorized` |
+| Source balance − selling liabilities ≥ amount (+ fee, for XLM) | `op_underfunded` |
+| Spendable XLM covers the fee above the minimum reserve | fee cannot be paid |
 | Destination account exists | `op_no_destination` |
-| Destination trusts the asset (non-native) | `op_no_trust` |
+| Destination trusts the asset and is authorized (non-native) | `op_no_trust`, `op_not_authorized` |
+| Destination has trustline headroom for the amount | `op_line_full` |
 | Amount ≤ 7 decimals, > 0 | malformed amount |
 | Memo fits its type's limits | `tx_malformed` |
+| MEMO_TEXT has no control characters | a memo that rewrites the confirmation display |
+| `--asset` has exactly one `CODE:ISSUER` pair | silently paying the wrong issuer's token |
 | Destination ≠ source | a pointless self-payment |
+
+All affordability math runs in **stroops** (`bigint`), not floats. Balances are
+read net of `selling_liabilities`, since XLM or tokens committed to open DEX
+offers are not spendable but Horizon reports the gross balance.
+
+`--memo` values usually arrive from an external system, and the confirmation
+prompt is the last human check before signing. A memo carrying ANSI escapes
+could scroll or rewrite that display after the destination has been printed, so
+control characters in MEMO_TEXT are rejected outright — no legitimate deposit
+memo contains them.
 
 If no `--memo` was given, the review block says so loudly — a missing memo is
 the single most common way a correct-looking deposit goes uncredited.
