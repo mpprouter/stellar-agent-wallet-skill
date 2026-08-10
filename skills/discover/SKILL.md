@@ -53,10 +53,11 @@ skill reads it and tags each record with a `payment_mode` string:
   `firecrawl_scrape`, `grok_grok_chat`, `groq_chat`, `mistral_mistral_chat`,
   `parallel_search`, `perplexity_perplexity_chat`, `storage_upload`
   (plus `tavily_tavily_search`, first paid-verified 2026-08-10).
-  **Do not trust this prose list over the live catalog** — the catalog's
-  `charge_rozo_verified` / `charge_rozo_verified_at` fields are the source
-  of truth, and the tx-hash audit trail for real paid verification runs is
-  published in
+  Every service on this list was verified with a **real paid call through
+  the production Router**. For the live view, read the catalog's
+  `charge_rozo_verified` / `charge_rozo_verified_at` fields — newly
+  verified services appear there in real time — and the tx-hash audit
+  trail of verification payments is published in
   [`rozo-mpprouter/docs/verified-runs.json`](https://github.com/mpprouter/rozo-mpprouter/blob/main/docs/verified-runs.json).
 - **`session`** (`⚠ session-only`) — upstream merchant is session-mode
   only. The router now correctly advertises `stellar.intents: ["channel"]`
