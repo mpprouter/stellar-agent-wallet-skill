@@ -364,6 +364,11 @@ When triggered, read the user's intent and dispatch:
      --amount <source.amount> --asset USDC --memo <receiverMemo>
    ```
 
+   If that returns `npm error Missing script: "tsx"`, your npm routed `npx tsx`
+   to `npm run tsx` and dropped the flags. Re-run it with the local binary —
+   `./node_modules/.bin/tsx skills/send-raw/run.ts …` — and do **not** treat the
+   failure as a failed payment: nothing was signed or submitted.
+
    **Do not use `send-payment` for this.** `send-payment` *originates* a
    payment: its `--to` is the final recipient of a **new** Rozo intent, and its
    `--memo` is that new intent's destination memo. Pointing it at an existing
