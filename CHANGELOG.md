@@ -9,6 +9,32 @@ Published: https://clawhub.ai/shawnmuggle/stellar-agentic-wallet
 
 ---
 
+## v1.8.1 — 2026-08-10
+
+A launcher fix. No runtime, signing, or payment behaviour changes.
+
+- **`npx tsx` could fail with `Missing script: "tsx"`** (#22). Every command in
+  the README and the SKILL.md files is documented as
+  `npx tsx skills/<name>/run.ts …`. On some npm versions `npx tsx` resolves to
+  `npm run tsx` rather than the local tsx binary; the run then dies with
+  `npm error Missing script: "tsx"`, and npm reinterprets the script's own
+  flags along the way (`--to` is reported as `--token-description`). The error
+  points nowhere near the real cause, so it reads like the skill is broken.
+  A `"tsx": "tsx"` script now makes that fallback path resolve, and both the
+  README and the `send-raw` section of SKILL.md document
+  `./node_modules/.bin/tsx …` as the direct launcher. Hit for real while
+  funding a `rozo-checkout` Stellar deposit.
+
+  For agents: this failure happens **before** anything is signed or submitted.
+  It is never a failed payment and must not trigger a retry of the send.
+
+- **Republished the plugin artifact** (#23). `build/plugin/` — the directory
+  users install via `/plugin marketplace add` — had drifted from source since
+  1.8.0, so the fix above and the v1.8.0 discover-wording change were not
+  actually reaching installs until it was rebuilt.
+
+---
+
 ## v1.8.0 — 2026-08-10
 
 Cuts everything that had accumulated since 1.7.0: the `send-raw` sub-skill, the
