@@ -47,16 +47,26 @@ The catalog exposes a `verified_mode` field per service. The discover
 skill reads it and tags each record with a `payment_mode` string:
 
 - **`charge`** (`✓ verified charge`) — end-to-end verified to work with
-  this skill's Stellar charge flow. Safe to call. Currently known-good:
-  `exa_search`, `firecrawl_scrape`, `parallel_search`, `alchemy_rpc`,
-  `storage_upload`.
+  this skill's Stellar charge flow. Safe to call. Known-good as of
+  2026-08-10 (12): `anthropic_chat_completions`, `coingecko_simple_price`,
+  `deepgram_deepgram_list-models`, `deepseek_chat`, `exa_search`,
+  `firecrawl_scrape`, `grok_grok_chat`, `groq_chat`, `mistral_mistral_chat`,
+  `parallel_search`, `perplexity_perplexity_chat`, `storage_upload`
+  (plus `tavily_tavily_search`, first paid-verified 2026-08-10).
+  **Do not trust this prose list over the live catalog** — the catalog's
+  `charge_rozo_verified` / `charge_rozo_verified_at` fields are the source
+  of truth, and the tx-hash audit trail for real paid verification runs is
+  published in
+  [`rozo-mpprouter/docs/verified-runs.json`](https://github.com/mpprouter/rozo-mpprouter/blob/main/docs/verified-runs.json).
 - **`session`** (`⚠ session-only`) — upstream merchant is session-mode
   only. The router now correctly advertises `stellar.intents: ["channel"]`
   (no `charge`) for these services. To use them, the agent must have a
   registered Stellar channel contract — see the `stellar-agent-wallet`
   root SKILL.md "Out of scope" section. Affected:
-  `gemini_generate`, `openai_chat`, `openrouter_chat`, `tempo_rpc`.
+  `anthropic_messages`, `openai_chat`, `openrouter_chat`, `tempo_rpc`.
   Charge-mode clients cannot call these services.
+  (`gemini_generate` is currently `payment_status: unavailable` — the
+  upstream merchant's Google API key is invalid; do not offer it.)
 - **`unverified`** (`· unverified`) — the router hasn't labeled
   `verified_mode` (or labeled it as the literal string `"false"`, which
   is a router-side catalog-generator bug). ~97% of the catalog is in
