@@ -38,6 +38,12 @@ individual `skills/*/SKILL.md` for each command's flags. The entry points:
 | Send USDC | `npx tsx skills/send-payment/run.ts …` |
 | Bridge USDC cross-chain | `npx tsx skills/bridge/run.ts …` |
 
+> If `npx tsx …` fails with `npm error Missing script: "tsx"` (some npm versions
+> route `npx tsx` to `npm run tsx` and swallow the flags — `--to` gets reported as
+> `--token-description`), run the local binary directly instead:
+> `./node_modules/.bin/tsx skills/<name>/run.ts …`. The script is unchanged; only
+> the launcher differs.
+
 A representative paid call, with the safety flags you should always pass
 when the catalog told you what to expect:
 
