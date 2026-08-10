@@ -9,6 +9,28 @@ Published: https://clawhub.ai/shawnmuggle/stellar-agentic-wallet
 
 ---
 
+## v1.8.0 — 2026-08-10
+
+Cuts everything that had accumulated since 1.7.0: the `send-raw` sub-skill, the
+2026-07-31 hardening round, and a security dependency bump.
+
+- **Security — `@stellar/stellar-sdk` 15.1.0 → 16.2.0** (#19). Clears two
+  high-severity advisories reaching us through the SDK's `axios` dependency
+  (authentication bypass via prototype pollution in the `validateStatus` merge
+  strategy). The SDK is a runtime dependency, so the vulnerable code shipped to
+  everyone who installed the skill or the plugin. `npm audit` now reports zero
+  vulnerabilities.
+
+  The version was declared in three places — `package.json` plus two plugin
+  templates rendered into the published artifact. Bumping only the first would
+  have left plugin users on the vulnerable SDK. All three now agree.
+
+  Known gap: `test:sign` is not a reliable gate. It hits testnet and fails
+  intermittently (~3 runs in 5) with Contract #6/#14 for the sender. Measured
+  on unmodified 15.1.0 it failed at the same rate, so this is pre-existing and
+  not a signing regression — but it does mean the release is not backed by a
+  green end-to-end run. Fixing that gate is tracked separately.
+
 ## Unreleased — `send-raw` sub-skill
 
 - **New — `send-raw`: pay a deposit address exactly as specified.** Every
