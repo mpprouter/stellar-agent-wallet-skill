@@ -9,6 +9,26 @@ Published: https://clawhub.ai/shawnmuggle/stellar-agentic-wallet
 
 ---
 
+## v1.8.5 — 2026-08-11
+
+Documentation corrections from the ClawHub security review (clawscan
+"Review" findings on 1.8.4). No code changes.
+
+- **Endpoint disclosure was inaccurate (LP3).** The metadata implied only the
+  listed endpoints are contacted, but pay-per-call by design fetches whatever
+  402 URL the user supplies plus its poll URL. The list now says so.
+- **The session-service rule contradicted itself (SDI-4).** One line said
+  refuse, another said never override the user. Now one rule: refuse by
+  default with the loss-of-fee warning; the single exception is the user
+  explicitly proceeding after that exact warning.
+- **"charge → proceed silently" overstated (SQP-2, surfaced via the discover
+  listing).** Verified describes the service record, not permission to spend
+  without the user seeing it; pay-per-call's mainnet confirmation gate applies.
+- **`--yes` examples no longer model mainnet use (SQP-1).** Both examples now
+  pin `--network testnet` and say why the mainnet prompt should run.
+
+---
+
 ## v1.8.4 — 2026-08-11
 
 Finds wallets left behind by earlier versions. Read-only: nothing is moved,
