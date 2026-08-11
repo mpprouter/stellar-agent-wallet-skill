@@ -178,7 +178,7 @@ If you do use a plaintext file, treat the wallet as a hot wallet holding only wh
 
 ### Network endpoints contacted
 
-This skill contacts only these endpoints (no other outbound connections):
+This skill contacts these endpoints on its own:
 
 | Endpoint | Purpose |
 |---|---|
@@ -186,6 +186,8 @@ This skill contacts only these endpoints (no other outbound connections):
 | `intentapiv4.rozo.ai` | Rozo cross-chain payment intents |
 | `horizon.stellar.org` | Stellar Horizon REST API (mainnet) |
 | `mainnet.sorobanrpc.com` | Soroban RPC (mainnet) |
+
+In addition, `pay-per-call` fetches whatever 402 service URL you point it at, plus any poll URL that service returns — that is its purpose, and those destinations are chosen per call, not fixed here. Pass `--expect-pay-to` / `--expect-amount` so a malicious or misconfigured service cannot redirect the payment.
 
 Wallet addresses, payment amounts, and bridge recipients are transmitted to these providers as part of normal operation. Use testnet endpoints while evaluating; override with `--horizon-url` and `--rpc-url` if needed.
 
