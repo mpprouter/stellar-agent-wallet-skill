@@ -6,7 +6,7 @@
  *   2. MPP  — WWW-Authenticate: Payment request=<base64-json> header
  *
  * Usage:
- *   npx tsx skills/pay-per-call/run.ts <url> [--method POST] [--body '{}'] [--yes]
+ *   ./node_modules/.bin/tsx skills/pay-per-call/run.ts <url> [--method POST] [--body '{}'] [--yes]
  *                                        [--max-auto <usd>] [--receipt-out <path>]
  *                                        [--dialect mpp|x402]
  *                                        [--json] [base flags]
@@ -234,7 +234,7 @@ async function preflightPayerReady(opts: {
   console.error("Use an existing funded wallet with --identity <name> or --secret-file <path>.");
   console.error("Check readiness with:");
   console.error(
-    `   npx tsx skills/onboard/run.ts ${opts.base.identity ? `--identity ${opts.base.identity}` : `--secret-file ${opts.base.secretFile}`} --network ${opts.base.network}`,
+    `   ./node_modules/.bin/tsx skills/onboard/run.ts ${opts.base.identity ? `--identity ${opts.base.identity}` : `--secret-file ${opts.base.secretFile}`} --network ${opts.base.network}`,
   );
   process.exit(4);
 }

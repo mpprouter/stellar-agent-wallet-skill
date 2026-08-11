@@ -13,7 +13,7 @@ description: >
   user shares a G... address with a payment intent.
 metadata:
   author: Shawn Yu
-  version: 1.8.1
+  version: 1.8.2
   license: MIT
   runtime: node
   homepage: https://www.mpprouter.dev/
@@ -37,7 +37,7 @@ metadata:
   # This skill signs Stellar transactions. It takes the signing key from
   # a file on disk or an existing Stellar CLI identity. Use:
   #
-  #   npx tsx scripts/generate-keypair.ts
+  #   ./node_modules/.bin/tsx scripts/generate-keypair.ts
   #
   # which writes a fresh secret to ./.stellar-secret with mode 600.
   # It refuses to overwrite existing wallet files. Every command accepts
@@ -105,9 +105,9 @@ metadata:
 
 This skill is a **Stellar wallet**. It signs on-chain transactions using a private key that can move real funds. Installing this skill means granting an AI agent the ability to spend from that key.
 
-**Use a dedicated hot wallet with a limited balance — never your main account.** Create a fresh keypair with `npx tsx scripts/generate-keypair.ts`, fund it with only what you need for the session, and treat the balance as expendable. If the key is ever compromised, the blast radius is limited to that wallet.
+**Use a dedicated hot wallet with a limited balance — never your main account.** Create a fresh keypair with `./node_modules/.bin/tsx scripts/generate-keypair.ts`, fund it with only what you need for the session, and treat the balance as expendable. If the key is ever compromised, the blast radius is limited to that wallet.
 
-**Keys live in a file or an existing Stellar CLI identity, not chat.** Run `npx tsx scripts/generate-keypair.ts` and it writes a fresh secret to `.stellar-secret` with mode 600, refusing to overwrite an existing file. Every command takes `--secret-file <path>` (default `.stellar-secret`) or `--identity <name>`.
+**Keys live in a file or an existing Stellar CLI identity, not chat.** Run `./node_modules/.bin/tsx scripts/generate-keypair.ts` and it writes a fresh secret to `.stellar-secret` with mode 600, refusing to overwrite an existing file. Every command takes `--secret-file <path>` (default `.stellar-secret`) or `--identity <name>`.
 
 **Default network is `pubnet` (mainnet).** If you do not pass `--network testnet`, every transaction moves real USDC. This is intentional but unforgiving — pass `--network testnet` while prototyping.
 
@@ -133,7 +133,7 @@ The signing key is resolved in this order — explicit always wins:
 **Keep main-wallet secrets out of `.env` files in this directory.** The fallback exists for legacy compatibility; prefer an explicit `--secret-file` or `--identity` so the credential source is always unambiguous. Check which public key is active before funding:
 
 ```bash
-npx tsx scripts/generate-keypair.ts --show-public   # or
+./node_modules/.bin/tsx scripts/generate-keypair.ts --show-public   # or
 stellar keys public-key <identity-name>
 ```
 
@@ -231,30 +231,30 @@ On a fresh machine, work top-down. Each step reads the sub-skill's
 ```bash
 # 0. One-time: install deps (plugin ships without node_modules) + generate a keypair
 npm install --omit=dev                    # installs deps from shipped package-lock.json (one-time, ~30s)
-npx tsx scripts/generate-keypair.ts
+./node_modules/.bin/tsx scripts/generate-keypair.ts
 
 # 1. Onboard — are we ready to pay?
-npx tsx skills/onboard/run.ts
+./node_modules/.bin/tsx skills/onboard/run.ts
 # → prints ✅/⚠️/❌ per check:
 #     ❌ [trustline] USDC Classic trustline not set
-#        Run: npx tsx skills/check-balance/add-trustline.ts --network pubnet
+#        Run: ./node_modules/.bin/tsx skills/check-balance/add-trustline.ts --network pubnet
 #     ❌ [usdc] USDC balance is zero
 
 # 2. Run setup: add trustline + swap 1 XLM for USDC
-npx tsx skills/onboard/run.ts --setup --swap 1
+./node_modules/.bin/tsx skills/onboard/run.ts --setup --swap 1
 # → confirms trustline, delegates to swap-xlm-to-usdc.ts
 
 # 3. Check balance now that we're set up
-npx tsx skills/check-balance/run.ts
+./node_modules/.bin/tsx skills/check-balance/run.ts
 # → USDC 0.07..., XLM 0.5 (spendable)
 
 # 4. Discover a paid API (capture path AND method)
-SERVICE=$(npx tsx skills/discover/run.ts --query "web search" --pick-one --json)
+SERVICE=$(./node_modules/.bin/tsx skills/discover/run.ts --query "web search" --pick-one --json)
 PATH_=$(echo "$SERVICE" | jq -r '.public_path')
 METHOD=$(echo "$SERVICE" | jq -r '.method')
 
 # 5. Call it — pay-per-call handles the 402 → sign → retry loop
-npx tsx skills/pay-per-call/run.ts "https://apiserver.mpprouter.dev$PATH_" \
+./node_modules/.bin/tsx skills/pay-per-call/run.ts "https://apiserver.mpprouter.dev$PATH_" \
   --method "$METHOD" \
   --body '{"query": "Summarize https://stripe.com/docs"}'
 # → 💸 Payment required (mpp) → signs → returns upstream result + Payment-Receipt
@@ -360,14 +360,16 @@ When triggered, read the user's intent and dispatch:
    produced a Stellar deposit address (`G...`) plus a memo, use **`send-raw`**:
 
    ```bash
-   npx tsx skills/send-raw/run.ts --to <receiverAddress> \
+   ./node_modules/.bin/tsx skills/send-raw/run.ts --to <receiverAddress> \
      --amount <source.amount> --asset USDC --memo <receiverMemo>
    ```
 
-   If that returns `npm error Missing script: "tsx"`, your npm routed `npx tsx`
-   to `npm run tsx` and dropped the flags. Re-run it with the local binary —
-   `./node_modules/.bin/tsx skills/send-raw/run.ts …` — and do **not** treat the
-   failure as a failed payment: nothing was signed or submitted.
+   Run the local binary as written above, not `npx tsx`: on some setups `npx`
+   resolves to `npm run tsx`, which fails with `npm error Missing script:
+   "tsx"` and reinterprets this command's own flags (`--to` becomes
+   `--token-description`). If you ever see that error, it happened **before**
+   anything was signed or submitted — it is not a failed payment, so re-run
+   with the correct launcher rather than treating the send as uncertain.
 
    **Do not use `send-payment` for this.** `send-payment` *originates* a
    payment: its `--to` is the final recipient of a **new** Rozo intent, and its
@@ -392,10 +394,10 @@ npm install --omit=dev
 # 2. Generate a keypair only if you do not already have a wallet.
 #    This writes ./.stellar-secret with mode 600, never prints the secret,
 #    and refuses to overwrite an existing wallet file.
-npx tsx scripts/generate-keypair.ts
+./node_modules/.bin/tsx scripts/generate-keypair.ts
 
 # 3. Check your balance:
-npx tsx skills/check-balance/run.ts
+./node_modules/.bin/tsx skills/check-balance/run.ts
 ```
 
 Every command accepts the same base flags:

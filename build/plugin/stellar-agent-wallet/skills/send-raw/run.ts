@@ -24,7 +24,7 @@
  *   5. Print tx hash + explorer link
  *
  * Usage:
- *   npx tsx skills/send-raw/run.ts \
+ *   ./node_modules/.bin/tsx skills/send-raw/run.ts \
  *     --to <G...> --amount <decimal> [--asset USDC|XLM|CODE:ISSUER] \
  *     [--memo <value>] [--memo-type text|id|hash|return] [base flags]
  *
@@ -88,7 +88,7 @@ function printHelp(): void {
       "send-raw — submit one Stellar Classic payment exactly as specified.",
       "",
       "Usage:",
-      "  npx tsx skills/send-raw/run.ts --to <G...> --amount <decimal> \\",
+      "  ./node_modules/.bin/tsx skills/send-raw/run.ts --to <G...> --amount <decimal> \\",
       "    [--asset USDC|XLM|CODE:ISSUER] [--memo <value>] [--memo-type text|id|hash|return] [-y]",
       "",
       "Flags:",
@@ -307,7 +307,7 @@ export async function preflight(
   if (!sourceLine) {
     throw new Error(
       `Source wallet has no ${assetLabel(asset)} trustline. ` +
-        `Add one with: npx tsx skills/check-balance/add-trustline.ts --network ${base.network}`,
+        `Add one with: ./node_modules/.bin/tsx skills/check-balance/add-trustline.ts --network ${base.network}`,
     );
   }
 

@@ -151,16 +151,16 @@ third-party APIs.
 
 ```bash
 # List all services
-npx tsx skills/discover/run.ts
+./node_modules/.bin/tsx skills/discover/run.ts
 
 # Filter by category
-npx tsx skills/discover/run.ts --category search
+./node_modules/.bin/tsx skills/discover/run.ts --category search
 
 # Match a free-text intent (uses simple keyword match)
-npx tsx skills/discover/run.ts --query "web search"
+./node_modules/.bin/tsx skills/discover/run.ts --query "web search"
 
 # JSON output for piping
-npx tsx skills/discover/run.ts --json
+./node_modules/.bin/tsx skills/discover/run.ts --json
 ```
 
 ## Full end-to-end example
@@ -169,7 +169,7 @@ npx tsx skills/discover/run.ts --json
 # Discover which service to use — capture path, method, and the
 # catalog-advertised payment expectations so pay-per-call can refuse
 # a 402 that tries to redirect funds or inflate the price.
-SERVICE_JSON=$(npx tsx skills/discover/run.ts --query "web search" --pick-one --json)
+SERVICE_JSON=$(./node_modules/.bin/tsx skills/discover/run.ts --query "web search" --pick-one --json)
 SERVICE=$(echo "$SERVICE_JSON" | jq -r '.public_path')
 METHOD=$(echo "$SERVICE_JSON" | jq -r '.method')
 EXPECT_AMT=$(echo "$SERVICE_JSON" | jq -r '.expect.amount_usdc // empty')
@@ -178,7 +178,7 @@ EXPECT_TO=$(echo "$SERVICE_JSON" | jq -r '.expect.pay_to // empty')
 # Call it — pay-per-call handles the 402 → pay → retry loop.
 # The --expect-* flags cross-check the 402 challenge against the
 # catalog. Any drift aborts before signing.
-npx tsx skills/pay-per-call/run.ts "https://apiserver.mpprouter.dev$SERVICE" \
+./node_modules/.bin/tsx skills/pay-per-call/run.ts "https://apiserver.mpprouter.dev$SERVICE" \
   --method "$METHOD" \
   --body '{"query": "Summarize https://stripe.com/docs"}' \
   ${EXPECT_AMT:+--expect-amount "$EXPECT_AMT"} \
