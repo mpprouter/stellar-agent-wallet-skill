@@ -102,10 +102,35 @@ export function loadSecretFromBase(base: {
 
 export function loadSecretWithSourceFromBase(base: {
   secretFile: string;
+  secretFileExplicit?: boolean;
   identity?: string;
 }): { secret: string; source: SecretSource } {
   if (base.identity) return loadSecretFromIdentity(base.identity);
-  return loadSecretWithSource(base.secretFile);
+  if (base.secretFileExplicit) {
+    // The user named this path, which authorises reading its directory.
+    return loadSecretWithSource(base.secretFile, { mayReadEnvFiles: true });
+  }
+  // Nothing was named, so only files this skill owns are in scope. The
+  // user-level copy is tried after the working directory because the working
+  // directory is where generate-keypair.ts writes by default.
+  const owned = ownedSecretPath();
+  if (!fs.existsSync(base.secretFile) && fs.existsSync(owned)) {
+    return loadSecretWithSource(owned, { mayReadEnvFiles: false });
+  }
+  return loadSecretWithSource(base.secretFile, { mayReadEnvFiles: false });
+}
+
+/**
+ * This skill's own place for a secret, used when no path was given.
+ *
+ * The default `.stellar-secret` is relative, so it lands in the working
+ * directory — which, when the documented commands are followed, is the
+ * versioned plugin install (`.../stellar-agent-wallet/1.8.2/`). A wallet
+ * generated there becomes invisible to the next version, whose install is a
+ * sibling directory. This location does not move with the version.
+ */
+export function ownedSecretPath(): string {
+  return nodePath.join(os.homedir(), ".stellar-agent-wallet", ".stellar-secret");
 }
 
 export function loadSecretFromIdentity(
@@ -188,6 +213,7 @@ function notePlaintextSecret(source: SecretSource): void {
  */
 export function loadSecretWithSource(
   path: string,
+  opts: { mayReadEnvFiles?: boolean } = {},
 ): { secret: string; source: SecretSource } {
   let raw: string;
   try {
@@ -195,10 +221,13 @@ export function loadSecretWithSource(
   } catch (err: any) {
     if (err?.code === "ENOENT") {
       const dir = nodePath.dirname(nodePath.resolve(path));
-      const envFallbacks = [
-        nodePath.join(dir, ".env.prod"),
-        nodePath.join(dir, ".env"),
-      ];
+      // `.env.prod` / `.env` are the USER's files and routinely hold
+      // credentials for unrelated things. We only look at them when the user
+      // named this location with --secret-file; an unnamed default directory
+      // is not an invitation to read whatever secrets happen to sit there.
+      const envFallbacks = opts.mayReadEnvFiles
+        ? [nodePath.join(dir, ".env.prod"), nodePath.join(dir, ".env")]
+        : [];
       for (const envPath of envFallbacks) {
         const hit = tryLoadFromEnvFile(envPath);
         if (hit) {
@@ -223,7 +252,10 @@ export function loadSecretWithSource(
         `Secret file not found at ${path}. Generate one with:\n` +
           `  ./node_modules/.bin/tsx scripts/generate-keypair.ts\n` +
           `or pass an existing file via --secret-file <path>,\n` +
-          `or set one of ${SECRET_ENV_KEYS.join(", ")} in .env.prod or .env.`,
+          (opts.mayReadEnvFiles
+            ? `or set one of ${SECRET_ENV_KEYS.join(", ")} in .env.prod or .env.`
+            : `or put one at ${ownedSecretPath()}.\n` +
+              `(.env files are only read from a directory you name with --secret-file.)`),
       );
     }
     throw err;

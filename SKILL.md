@@ -13,7 +13,7 @@ description: >
   user shares a G... address with a payment intent.
 metadata:
   author: Shawn Yu
-  version: 1.8.2
+  version: 1.8.3
   license: MIT
   runtime: node
   homepage: https://www.mpprouter.dev/
@@ -128,7 +128,12 @@ The signing key is resolved in this order — explicit always wins:
 1. `--identity <name>` → Stellar CLI identity (recommended for shared machines)
 2. `--secret-file <path>` → explicit file path
 3. Default file `.stellar-secret` in the working directory
-4. Fallback: `STELLAR_SECRET` (or legacy aliases) in `.env.prod` then `.env` in the same directory as the secret file
+4. `~/.stellar-agent-wallet/.stellar-secret` — this skill's own location, which does not move when the plugin version changes
+5. Only when you named a path with `--secret-file`: `STELLAR_SECRET` (or legacy aliases) in `.env.prod` then `.env` in that directory
+
+**`.env` files are read only from a directory you name.** They are your files and routinely hold credentials for unrelated things, so an unnamed default directory is not treated as an invitation to read whatever secrets happen to sit there. Point at one explicitly with `--secret-file <path>` if that is where your key lives.
+
+**Prefer `~/.stellar-agent-wallet/.stellar-secret` over the working-directory default.** When you follow the documented commands the working directory is the versioned plugin install (`.../stellar-agent-wallet/1.8.2/`), and the next version is a sibling directory — a wallet generated there is invisible after an upgrade. A Stellar CLI identity (`--identity`) is likewise unaffected.
 
 **Keep main-wallet secrets out of `.env` files in this directory.** The fallback exists for legacy compatibility; prefer an explicit `--secret-file` or `--identity` so the credential source is always unambiguous. Check which public key is active before funding:
 
