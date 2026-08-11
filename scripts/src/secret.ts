@@ -121,21 +121,93 @@ export function loadSecretWithSourceFromBase(base: {
     // The user named this path, which authorises reading its directory.
     return loadSecretWithSource(base.secretFile, { mayReadEnvFiles: true });
   }
-  // Nothing was named, so only files this skill owns are in scope. The
-  // working directory is tried first because that is where
+  // Nothing was named, so only files this skill owns are in scope: a
+  // `.stellar-secret` this skill wrote, never a file that belongs to someone
+  // else. The working directory comes first because that is where
   // generate-keypair.ts writes by default.
-  try {
-    return loadSecretWithSource(base.secretFile, { mayReadEnvFiles: false });
-  } catch (err: any) {
-    // Fall back ONLY when the file is genuinely absent. An unreadable file
-    // (EACCES, a permission-denied parent directory) must surface as itself:
-    // quietly signing with a different wallet than the user has in that
-    // directory is a worse outcome than failing.
-    if (err?.code !== "ENOENT") throw err;
-    const owned = ownedSecretPath();
-    if (!fs.existsSync(owned)) throw err;
-    return loadSecretWithSource(owned, { mayReadEnvFiles: false });
+  //
+  // Nothing here moves, rewrites or deletes any of those files. Discovery is
+  // read-only; a wallet found in an older install stays exactly where it is,
+  // and the user is told where it was read from so they can decide.
+  let firstError: any;
+  for (const candidate of secretFileCandidates(base.secretFile)) {
+    try {
+      const loaded = loadSecretWithSource(candidate, { mayReadEnvFiles: false });
+      if (candidate !== base.secretFile) {
+        console.error(
+          `ℹ️  No ${base.secretFile} here; using the wallet at ${candidate}.\n` +
+            `   Nothing was moved. To make it version-proof, copy it yourself to ` +
+            `${ownedSecretPath()}.`,
+        );
+      }
+      return loaded;
+    } catch (err: any) {
+      // Move on ONLY when the file is genuinely absent. An unreadable file
+      // (EACCES, a permission-denied parent directory) must surface as
+      // itself: quietly signing with a different wallet than the one the user
+      // has in that directory is a worse outcome than failing.
+      if (err?.code !== "ENOENT") throw err;
+      firstError ??= err;
+    }
   }
+  throw firstError;
+}
+
+/**
+ * Every place this skill may have written a `.stellar-secret`, in order.
+ *
+ * The third group is why this list exists. A plugin install is versioned —
+ * `.../stellar-agent-wallet/1.8.2/` — and the next version is a SIBLING
+ * directory, so a wallet generated under the default in one version is
+ * invisible to the next. Those are still this skill's own files in this
+ * skill's own install directories, so finding them is fair game; a generic
+ * `~/.env` or any other file belonging to the user is not, and never appears
+ * here.
+ *
+ * Newest sibling first, so an upgrade path that has been through several
+ * versions lands on the most recently used wallet rather than the oldest.
+ */
+export function secretFileCandidates(secretFile: string): string[] {
+  const out = [secretFile, ownedSecretPath()];
+  for (const dir of siblingInstallDirs()) {
+    const p = nodePath.join(dir, ".stellar-secret");
+    if (!out.includes(p)) out.push(p);
+  }
+  return out.filter((p, i) => out.indexOf(p) === i);
+}
+
+/** Other installed versions of this skill, newest first. Never throws. */
+function siblingInstallDirs(): string[] {
+  try {
+    const here = nodePath.resolve(process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd());
+    const parent = nodePath.dirname(here);
+    // Only when the layout really is <...>/stellar-agent-wallet/<version>/.
+    if (nodePath.basename(parent) !== "stellar-agent-wallet") return [];
+    return fs
+      .readdirSync(parent, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => nodePath.join(parent, e.name))
+      .filter((p) => p !== here)
+      .sort((a, b) => compareVersionDesc(nodePath.basename(a), nodePath.basename(b)));
+  } catch {
+    return [];
+  }
+}
+
+/** Sort version-like directory names newest first; non-versions sort last. */
+function compareVersionDesc(a: string, b: string): number {
+  const parse = (v: string) =>
+    /^\d+(\.\d+)*$/.test(v) ? v.split(".").map(Number) : null;
+  const pa = parse(a);
+  const pb = parse(b);
+  if (!pa && !pb) return a < b ? 1 : a > b ? -1 : 0;
+  if (!pa) return 1;
+  if (!pb) return -1;
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pb[i] ?? 0) - (pa[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
 }
 
 /**
