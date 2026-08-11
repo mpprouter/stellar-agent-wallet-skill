@@ -89,6 +89,15 @@ function tryLoadFromEnvFile(envPath: string): DotEnvHit | undefined {
  * Fallback: if the secret file does not exist, checks .env.prod then .env
  * (relative to the secret file's directory) for a STELLAR_SECRET= line.
  */
+/**
+ * "No secret here" as a distinguishable error. Callers that fall back to
+ * another location must be able to tell absence from an unreadable file, so
+ * they never quietly switch wallets on a permissions problem.
+ */
+function notFound(message: string): Error & { code: string } {
+  return Object.assign(new Error(message), { code: "ENOENT" as const });
+}
+
 export function loadSecretFromFile(path: string): string {
   // A caller of this API passed the path itself, which is the same
   // authorisation --secret-file carries.
@@ -113,13 +122,20 @@ export function loadSecretWithSourceFromBase(base: {
     return loadSecretWithSource(base.secretFile, { mayReadEnvFiles: true });
   }
   // Nothing was named, so only files this skill owns are in scope. The
-  // user-level copy is tried after the working directory because the working
-  // directory is where generate-keypair.ts writes by default.
-  const owned = ownedSecretPath();
-  if (!fs.existsSync(base.secretFile) && fs.existsSync(owned)) {
+  // working directory is tried first because that is where
+  // generate-keypair.ts writes by default.
+  try {
+    return loadSecretWithSource(base.secretFile, { mayReadEnvFiles: false });
+  } catch (err: any) {
+    // Fall back ONLY when the file is genuinely absent. An unreadable file
+    // (EACCES, a permission-denied parent directory) must surface as itself:
+    // quietly signing with a different wallet than the user has in that
+    // directory is a worse outcome than failing.
+    if (err?.code !== "ENOENT") throw err;
+    const owned = ownedSecretPath();
+    if (!fs.existsSync(owned)) throw err;
     return loadSecretWithSource(owned, { mayReadEnvFiles: false });
   }
-  return loadSecretWithSource(base.secretFile, { mayReadEnvFiles: false });
 }
 
 /**
@@ -250,7 +266,7 @@ export function loadSecretWithSource(
           return { secret: hit.value, source: envSource };
         }
       }
-      throw new Error(
+      throw notFound(
         `Secret file not found at ${path}. Generate one with:\n` +
           `  ./node_modules/.bin/tsx scripts/generate-keypair.ts\n` +
           `or pass an existing file via --secret-file <path>,\n` +
