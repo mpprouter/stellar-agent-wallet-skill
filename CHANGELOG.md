@@ -9,6 +9,30 @@ Published: https://clawhub.ai/shawnmuggle/stellar-agentic-wallet
 
 ---
 
+## v1.8.4 — 2026-08-11
+
+Finds wallets left behind by earlier versions. Read-only: nothing is moved,
+rewritten or deleted.
+
+- **A `.stellar-secret` in an older install is now found.** 1.8.3 added a
+  version-proof location but did nothing for wallets already sitting in a
+  previous install (`.../stellar-agent-wallet/1.8.1/`), which upgrading users
+  would have seen as "secret file not found" — a wallet that looks lost while
+  its funds are still on-chain. Resolution now walks: the working directory,
+  `~/.stellar-agent-wallet/.stellar-secret`, then sibling installs newest
+  first. When one of those older wallets is used, the path is printed along
+  with a suggestion to copy it somewhere version-proof — a suggestion, not an
+  action: the file stays exactly where the user left it.
+
+  Only `.stellar-secret` files this skill wrote, in this skill's own install
+  directories, are ever considered. A generic `~/.env` or any other file
+  belonging to the user is still never read.
+
+- Absence still moves to the next candidate only on `ENOENT`; an unreadable
+  file surfaces as itself rather than silently selecting a different wallet.
+
+---
+
 ## v1.8.3 — 2026-08-11
 
 Credential handling: only read what you were pointed at.
