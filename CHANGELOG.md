@@ -9,6 +9,31 @@ Published: https://clawhub.ai/shawnmuggle/stellar-agentic-wallet
 
 ---
 
+## v1.8.3 — 2026-08-11
+
+Credential handling: only read what you were pointed at.
+
+- **`.env.prod` / `.env` are no longer read from an unnamed directory.** The
+  secret loader fell back to them in the secret file's directory, which by
+  default is just the working directory. Those are the user's files and
+  routinely hold credentials for unrelated things — API keys, database URLs —
+  so reading them because the tool happened to be run there is not something
+  the user ever agreed to. They are now consulted only when a path was named
+  with `--secret-file`; naming a location is what authorises reading it.
+
+- **New: `~/.stellar-agent-wallet/.stellar-secret`, checked when no path was
+  given.** The default `.stellar-secret` is relative, so it lands in the
+  working directory — which, following the documented commands, is the
+  versioned plugin install (`.../stellar-agent-wallet/1.8.2/`). The next
+  version installs to a sibling directory, so a wallet generated under the
+  default became invisible after an upgrade, with the key stranded in the old
+  version's folder. This location does not move with the version. A Stellar
+  CLI identity (`--identity`) was never affected.
+
+Nothing changes for `--identity` or an explicit `--secret-file`.
+
+---
+
 ## v1.8.2 — 2026-08-11
 
 Finishes the launcher fix 1.8.1 started. Docs only plus one package.json line;
