@@ -129,11 +129,14 @@ The signing key is resolved in this order — explicit always wins:
 2. `--secret-file <path>` → explicit file path
 3. Default file `.stellar-secret` in the working directory
 4. `~/.stellar-agent-wallet/.stellar-secret` — this skill's own location, which does not move when the plugin version changes
-5. Only when you named a path with `--secret-file`: `STELLAR_SECRET` (or legacy aliases) in `.env.prod` then `.env` in that directory
+5. A `.stellar-secret` left in an **older install of this skill** (`.../stellar-agent-wallet/<older version>/`), newest version first
+6. Only when you named a path with `--secret-file`: `STELLAR_SECRET` (or legacy aliases) in `.env.prod` then `.env` in that directory
+
+Steps 3-5 are searched only when no path was named; steps 1, 2 and 6 need you to name one. Whenever a payment is about to be signed from anything other than the working-directory default, the path it came from is printed first.
 
 **`.env` files are read only from a directory you name.** They are your files and routinely hold credentials for unrelated things, so an unnamed default directory is not treated as an invitation to read whatever secrets happen to sit there. Point at one explicitly with `--secret-file <path>` if that is where your key lives.
 
-**Prefer `~/.stellar-agent-wallet/.stellar-secret` over the working-directory default.** When you follow the documented commands the working directory is the versioned plugin install (`.../stellar-agent-wallet/1.8.3/`), and the next version is a sibling directory. A wallet generated there is still found after an upgrade — step 5 looks through older installs — but it stays tied to a version you have moved off. A Stellar CLI identity (`--identity`) is unaffected either way.
+**Prefer `~/.stellar-agent-wallet/.stellar-secret` over the working-directory default.** When you follow the documented commands the working directory is the versioned plugin install (`.../stellar-agent-wallet/1.8.3/`), and the next version is a sibling directory. A wallet generated there is still found after an upgrade (step 5), but it stays tied to a version you have moved off. A Stellar CLI identity (`--identity`) is unaffected either way.
 
 **Discovery never moves or deletes anything.** A wallet found in an older install is read where it lies and its path is printed, so you can copy it yourself if you want to. This skill does not relocate, rewrite or remove a key file on your behalf.
 
