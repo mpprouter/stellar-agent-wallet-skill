@@ -90,7 +90,9 @@ function tryLoadFromEnvFile(envPath: string): DotEnvHit | undefined {
  * (relative to the secret file's directory) for a STELLAR_SECRET= line.
  */
 export function loadSecretFromFile(path: string): string {
-  return loadSecretWithSource(path).secret;
+  // A caller of this API passed the path itself, which is the same
+  // authorisation --secret-file carries.
+  return loadSecretWithSource(path, { mayReadEnvFiles: true }).secret;
 }
 
 export function loadSecretFromBase(base: {

@@ -25,8 +25,11 @@ export interface BaseConfig {
    * decide whether it may look at .env files next to the secret file: naming
    * a path is what authorises reading that directory. Without it the loader
    * stays on files this skill owns.
+   *
+   * Optional so existing code that builds a BaseConfig by hand keeps type
+   * checking; absent is treated as "not explicit", the safe reading.
    */
-  secretFileExplicit: boolean;
+  secretFileExplicit?: boolean;
   identity?: string;
   network: "testnet" | "pubnet";
   horizonUrl: string;
