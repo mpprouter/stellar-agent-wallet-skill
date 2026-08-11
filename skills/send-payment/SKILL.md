@@ -85,8 +85,9 @@ If Stellar C-wallet: the Rozo response will include `receiverAddressContract` an
   --to 0x... --chain base --amount 1.00 \
   --title "Invoice #123" --description "Monthly subscription"
 
-# Skip confirmation (use with care — large-amount gate still fires)
-./node_modules/.bin/tsx skills/send-payment/run.ts --to ... --chain base --amount 0.50 --yes
+# Skip confirmation — TESTNET pipelines only; on mainnet let the prompt run
+# (the large-amount gate still fires either way)
+./node_modules/.bin/tsx skills/send-payment/run.ts --network testnet --to ... --chain base --amount 0.50 --yes
 
 # Idempotent retry with custom orderId
 ./node_modules/.bin/tsx skills/send-payment/run.ts --to ... --chain base --amount 10 --order-id my-unique-id

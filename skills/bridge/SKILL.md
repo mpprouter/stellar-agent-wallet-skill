@@ -51,8 +51,10 @@ Stellar→Stellar is obviously not a bridge, so it's excluded here (use `send-pa
 # Explicit
 ./node_modules/.bin/tsx skills/bridge/run.ts --chain base --amount 50 --my-address 0xAbCd...
 
-# Use the same wallet secret as the source (wallet-to-wallet)
-./node_modules/.bin/tsx skills/bridge/run.ts --chain base --amount 50 --my-address 0xAbCd... --yes
+# Use the same wallet secret as the source (wallet-to-wallet).
+# --yes exists for headless pipelines on TESTNET; on mainnet let the prompt
+# run — it is the last look at the destination before real funds move.
+./node_modules/.bin/tsx skills/bridge/run.ts --network testnet --chain base --amount 50 --my-address 0xAbCd... --yes
 ```
 
 ## Why this is just a thin wrapper

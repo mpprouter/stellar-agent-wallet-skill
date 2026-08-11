@@ -82,18 +82,23 @@ When the user asks to call a paid API via MPP Router:
 1. Fetch the catalog fresh.
 2. Find the best service match.
 3. Check its `payment_mode`:
-   - `charge` → proceed silently.
-   - `session` → **refuse to call it.** Tell the user: "This service is
-     currently in session-only mode on MPP Router. Paying via Stellar
-     charge mode would succeed but the upstream would reject the
+   - `charge` → proceed to pay-per-call. This is still a real-money
+     mainnet payment: pay-per-call's own confirmation gate applies (it
+     prompts before every mainnet payment unless the user has set a
+     session `--max-auto` ceiling). "Verified" describes the service
+     record, not permission to spend without the user seeing it.
+   - `session` → **do not call it by default.** Tell the user: "This
+     service is currently in session-only mode on MPP Router. Paying via
+     Stellar charge mode would succeed but the upstream would reject the
      receipt, so you'd lose the fee with no result. Waiting on a
-     router-side fix. Alternative service?"
-   - `unverified` → proceed but surface a brief caveat in your
-     response ("this service isn't formally verified for Stellar charge
-     mode; proceeding anyway — let me know if the call fails after
-     payment").
-4. Never override the user's explicit instruction to call a `session`
-   service, but do warn them loudly before doing it.
+     router-side fix. Alternative service?" The ONE exception: the user,
+     after reading exactly that warning, explicitly says to proceed
+     anyway and accepts the fee is likely lost — then proceed. There is
+     no other path to calling a `session` service.
+   - `unverified` → proceed (through the same confirmation gate) but
+     surface a brief caveat in your response ("this service isn't
+     formally verified for Stellar charge mode; proceeding anyway — let
+     me know if the call fails after payment").
 
 ## Service record shape
 
