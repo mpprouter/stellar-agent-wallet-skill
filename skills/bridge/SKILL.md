@@ -46,13 +46,13 @@ Stellar→Stellar is obviously not a bridge, so it's excluded here (use `send-pa
 
 ```bash
 # Interactive
-npx tsx skills/bridge/run.ts
+./node_modules/.bin/tsx skills/bridge/run.ts
 
 # Explicit
-npx tsx skills/bridge/run.ts --chain base --amount 50 --my-address 0xAbCd...
+./node_modules/.bin/tsx skills/bridge/run.ts --chain base --amount 50 --my-address 0xAbCd...
 
 # Use the same wallet secret as the source (wallet-to-wallet)
-npx tsx skills/bridge/run.ts --chain base --amount 50 --my-address 0xAbCd... --yes
+./node_modules/.bin/tsx skills/bridge/run.ts --chain base --amount 50 --my-address 0xAbCd... --yes
 ```
 
 ## Why this is just a thin wrapper

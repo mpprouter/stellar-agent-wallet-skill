@@ -221,7 +221,7 @@ export function loadSecretWithSource(
       }
       throw new Error(
         `Secret file not found at ${path}. Generate one with:\n` +
-          `  npx tsx scripts/generate-keypair.ts\n` +
+          `  ./node_modules/.bin/tsx scripts/generate-keypair.ts\n` +
           `or pass an existing file via --secret-file <path>,\n` +
           `or set one of ${SECRET_ENV_KEYS.join(", ")} in .env.prod or .env.`,
       );

@@ -3,7 +3,6 @@
   "private": true,
   "description": "Build tooling for the stellar-agent-wallet skill and Claude Code plugin.",
   "scripts": {
-    "tsx": "tsx",
     "build:skill": "node plugin/build-skill.mjs",
     "build:plugin": "node plugin/build-plugin.mjs",
     "build:all": "npm run build:skill && npm run build:plugin",

@@ -57,7 +57,7 @@ to improvise. `send-raw` is that pipeline as one audited command.
 
 ```bash
 # Fund a deposit address with USDC + the required text memo
-npx tsx skills/send-raw/run.ts \
+./node_modules/.bin/tsx skills/send-raw/run.ts \
   --to GB4CLV...6EB4 \
   --amount 1.0500 \
   --asset USDC \
@@ -65,16 +65,16 @@ npx tsx skills/send-raw/run.ts \
   --identity mpp-mainnet-payer
 
 # Native XLM, numeric memo (common at exchanges)
-npx tsx skills/send-raw/run.ts \
+./node_modules/.bin/tsx skills/send-raw/run.ts \
   --to G... --amount 25 --asset XLM --memo 9182736455 --memo-type id
 
 # A non-USDC issued asset
-npx tsx skills/send-raw/run.ts \
+./node_modules/.bin/tsx skills/send-raw/run.ts \
   --to G... --amount 10 \
   --asset EURC:GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2
 
 # Testnet dry run
-npx tsx skills/send-raw/run.ts \
+./node_modules/.bin/tsx skills/send-raw/run.ts \
   --to G... --amount 1 --asset XLM --memo hello --network testnet
 ```
 

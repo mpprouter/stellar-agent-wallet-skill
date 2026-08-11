@@ -21,7 +21,7 @@
 // asset-agnostic.
 //
 // Usage:
-//   npx tsx scripts/smoke-test-send-raw.ts
+//   ./node_modules/.bin/tsx scripts/smoke-test-send-raw.ts
 //
 // Exit code: 0 on success, non-zero on any failure.
 

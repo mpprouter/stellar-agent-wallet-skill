@@ -95,20 +95,20 @@ Full decoded walkthrough of a real dual-dialect 402:
 
 ```bash
 # MPP Router service (discovered via discover skill)
-npx tsx skills/pay-per-call/run.ts \
+./node_modules/.bin/tsx skills/pay-per-call/run.ts \
   "https://apiserver.mpprouter.dev/v1/services/parallel/search" \
   --body '{"query": "Summarize https://stripe.com/docs"}' \
   --method POST \
   --identity mpp-mainnet-payer
 
 # x402 facilitator
-npx tsx skills/pay-per-call/run.ts https://some-x402-api.example/endpoint
+./node_modules/.bin/tsx skills/pay-per-call/run.ts https://some-x402-api.example/endpoint
 
 # Include JSON output mode
-npx tsx skills/pay-per-call/run.ts <url> --body '{...}' --json
+./node_modules/.bin/tsx skills/pay-per-call/run.ts <url> --body '{...}' --json
 
 # Save payment receipt to file
-npx tsx skills/pay-per-call/run.ts <url> --receipt-out receipt.json
+./node_modules/.bin/tsx skills/pay-per-call/run.ts <url> --receipt-out receipt.json
 ```
 
 ## Async jobs (202 responses)
@@ -147,13 +147,13 @@ If there is no `X-Job-Poll-Url` header, the 202 body is printed as-is.
 ```bash
 # Discover — capture the service + its catalog-asserted payment
 # expectations so pay-per-call can refuse a hostile 402.
-SERVICE=$(npx tsx skills/discover/run.ts --query "web search" --pick-one --json)
+SERVICE=$(./node_modules/.bin/tsx skills/discover/run.ts --query "web search" --pick-one --json)
 URL="https://apiserver.mpprouter.dev$(echo "$SERVICE" | jq -r '.public_path')"
 EXPECT_AMT=$(echo "$SERVICE" | jq -r '.expect.amount_usdc // empty')
 EXPECT_TO=$(echo "$SERVICE" | jq -r '.expect.pay_to // empty')
 
 # Call
-npx tsx skills/pay-per-call/run.ts "$URL" \
+./node_modules/.bin/tsx skills/pay-per-call/run.ts "$URL" \
   --body '{"query": "Summarize https://stripe.com/docs"}' \
   --method POST \
   ${EXPECT_AMT:+--expect-amount "$EXPECT_AMT"} \
