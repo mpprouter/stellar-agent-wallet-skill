@@ -130,6 +130,27 @@ result. When this happens:
 
 If there is no `X-Job-Poll-Url` header, the 202 body is printed as-is.
 
+## When a paid call fails: automatic refunds
+
+If the payment settles but the upstream service does not deliver, the MPP
+Router refunds you automatically and reports it **in response headers**
+(`Refund-Id`, `Refund-Status`, `Refund-Status-Url`) — never in the body.
+This script prints them on stderr the moment it sees them, on the direct
+response and on async job polls alike:
+
+```
+💸 Payment refunded automatically (the call was paid but not fulfilled)
+   Refund-Id:     6e8eb745-d90e-45fc-a258-4846e9552f16
+   Refund-Status: pending
+   Receipt:       curl -s https://apiserver.mpprouter.dev/v1/refunds/6e8eb745-...
+```
+
+With `--json`, a machine-readable `REFUND_JSON {...}` line is emitted too.
+
+Fetch that URL until `outcome` leaves `refund_pending` (~25s) and you get a
+signed receipt you can verify yourself. Step-by-step, with runnable
+verification code: `references/verifying-refunds.md`.
+
 ## Safety
 
 - ✅ **Credentials are single-use** — if the first retry fails, the credential is burned. Don't blindly re-retry; start fresh.

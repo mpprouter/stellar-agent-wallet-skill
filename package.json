@@ -8,11 +8,12 @@
     "build:all": "npm run build:skill && npm run build:plugin",
     "test:sign": "tsx scripts/smoke-test-sign.ts",
     "test:envelope": "tsx scripts/smoke-test-mpp-envelope.ts",
-    "test": "npm run test:envelope && npm run test:x402 && npm run test:validate-challenge && npm run test:sign && npm run test:receipt && npm run test:secret-note && npm run test:send-raw",
+    "test": "npm run test:envelope && npm run test:x402 && npm run test:validate-challenge && npm run test:sign && npm run test:receipt && npm run test:refund && npm run test:secret-note && npm run test:send-raw",
     "test:send-raw": "tsx scripts/smoke-test-send-raw.ts",
     "test:x402": "tsx scripts/smoke-test-x402-dialect.ts",
     "test:validate-challenge": "tsx scripts/smoke-test-validate-challenge.ts",
     "test:receipt": "tsx scripts/smoke-test-receipt.ts",
+    "test:refund": "tsx scripts/smoke-test-refund.ts",
     "test:secret-note": "tsx scripts/smoke-test-secret-note.ts"
   },
   "dependencies": {
