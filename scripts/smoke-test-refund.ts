@@ -40,12 +40,30 @@ assert(partial?.statusUrl === URL_STATUS, "synthesises the receipt URL from the 
 const noOrigin = parseRefundHeaders(new Headers({ "refund-id": ID }));
 assert(noOrigin?.id === ID && noOrigin?.statusUrl === undefined, "id without URL is still reported");
 
-// 5. The ordinary case: a failure with no refund must stay silent.
+// 5. Header values come from whatever endpoint was called, so a hostile
+// server can put anything in them. A non-http(s) URL is dropped rather than
+// echoed, and the URL is never printed as a ready-to-paste shell command.
+const hostile = parseRefundHeaders(new Headers({
+  "refund-id": ID,
+  "refund-status-url": "javascript:alert(1)",
+}));
+assert(hostile?.statusUrl === undefined, "non-http(s) receipt URL is dropped");
+assert(
+  !formatRefundLines(full).some((l) => /curl .*https?:\/\//.test(l)),
+  "the receipt URL is printed bare, never inside a runnable curl command",
+);
+const weirdId = parseRefundHeaders(
+  new Headers({ "refund-id": "not a; uuid" }),
+  "https://apiserver.mpprouter.dev/v1/services/foo/bar",
+);
+assert(weirdId?.statusUrl === undefined, "an implausible id is not spliced into a synthesised URL");
+
+// 6. The ordinary case: a failure with no refund must stay silent.
 assert(parseRefundHeaders(new Headers({ "content-type": "application/json" })) === null,
   "no Refund-Id → null");
 assert(formatRefundLines(null).length === 0, "null refund prints nothing");
 
-// 6. A blank header is not a refund.
+// 7. A blank header is not a refund.
 assert(parseRefundHeaders(new Headers({ "refund-id": "  " })) === null,
   "blank Refund-Id is ignored");
 

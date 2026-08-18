@@ -23,6 +23,23 @@ export interface RefundInfo {
   statusUrl?: string;
 }
 
+/**
+ * The headers come from whatever endpoint was called, which the caller chose
+ * freely — a hostile 402 server can put anything in them. Only a well-formed
+ * http(s) URL is ever echoed back, and it is echoed as a bare URL, never as a
+ * ready-to-paste shell command, so a value carrying shell metacharacters
+ * cannot turn into a command the payer runs.
+ */
+function safeHttpUrl(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    const u = new URL(value);
+    return u.protocol === "https:" || u.protocol === "http:" ? u.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function header(headers: Headers, name: string): string | undefined {
   const v = headers.get(name);
   return v && v.trim() ? v.trim() : undefined;
@@ -39,11 +56,11 @@ export function parseRefundHeaders(
   const id = header(headers, "refund-id");
   if (!id) return null;
 
-  let statusUrl = header(headers, "refund-status-url");
+  let statusUrl = safeHttpUrl(header(headers, "refund-status-url"));
   // Older router deployments set `Refund-Id` without the URL (see the 502
   // async-delivery paths). Rebuild it from the request origin so the payer
   // still gets a link to fetch the receipt from.
-  if (!statusUrl && requestUrl) {
+  if (!statusUrl && requestUrl && /^[A-Za-z0-9-]{1,64}$/.test(id)) {
     try {
       statusUrl = `${new URL(requestUrl).origin}/v1/refunds/${id}`;
     } catch {
@@ -66,7 +83,8 @@ export function formatRefundLines(info: RefundInfo | null): string[] {
   ];
   if (info.status) lines.push(`   Refund-Status: ${info.status}`);
   if (info.statusUrl) {
-    lines.push(`   Receipt:       curl -s ${info.statusUrl}`);
+    lines.push(`   Receipt:       ${info.statusUrl}`);
+    lines.push(`   Fetch it with: curl -s '<the URL above>'`);
     lines.push(
       `   Poll until "outcome" leaves "refund_pending" (usually ~25s), then`,
     );

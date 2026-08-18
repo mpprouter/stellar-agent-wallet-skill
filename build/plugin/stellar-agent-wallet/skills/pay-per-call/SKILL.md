@@ -142,7 +142,8 @@ response and on async job polls alike:
 💸 Payment refunded automatically (the call was paid but not fulfilled)
    Refund-Id:     6e8eb745-d90e-45fc-a258-4846e9552f16
    Refund-Status: pending
-   Receipt:       curl -s https://apiserver.mpprouter.dev/v1/refunds/6e8eb745-...
+   Receipt:       https://apiserver.mpprouter.dev/v1/refunds/6e8eb745-...
+   Fetch it with: curl -s '<the URL above>'
 ```
 
 With `--json`, a machine-readable `REFUND_JSON {...}` line is emitted too.

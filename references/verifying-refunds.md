@@ -30,7 +30,8 @@ Refund-Status-Url: https://apiserver.mpprouter.dev/v1/refunds/6e8eb745-...
 💸 Payment refunded automatically (the call was paid but not fulfilled)
    Refund-Id:     6e8eb745-d90e-45fc-a258-4846e9552f16
    Refund-Status: pending
-   Receipt:       curl -s https://apiserver.mpprouter.dev/v1/refunds/6e8eb745-...
+   Receipt:       https://apiserver.mpprouter.dev/v1/refunds/6e8eb745-...
+   Fetch it with: curl -s '<the URL above>'
 ```
 
 With `--json` it also emits a machine-readable line for calling agents:
@@ -44,6 +45,10 @@ Using your own HTTP client instead? Read the headers, not the body:
 ```bash
 curl -sD - -o /dev/null "$URL" -H "Authorization: Payment $CREDENTIAL" | grep -i '^refund-'
 ```
+
+The receipt URL is printed bare rather than as a runnable command: it comes
+from a header set by whatever endpoint you called, so this client validates it
+is an `http(s)` URL and leaves quoting to you.
 
 If there is no `Refund-Id`, no refund was created — either the call
 succeeded, or it failed *before* your payment settled and nothing left your
