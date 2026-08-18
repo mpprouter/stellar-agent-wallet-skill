@@ -9,6 +9,34 @@ Published: https://clawhub.ai/shawnmuggle/stellar-agentic-wallet
 
 ---
 
+## v1.8.6 — 2026-08-18
+
+Makes an automatic refund visible to the payer, and documents how to verify the
+receipt without trusting us. No change to signing or payment behaviour.
+
+- **`pay-per-call` now prints `Refund-Id` when a paid call fails.** The MPP
+  Router refunds a payment the upstream did not fulfil, and reports it *only*
+  in response headers (`Refund-Id`, `Refund-Status`, `Refund-Status-Url`) —
+  the body is the upstream error. This client printed only the body, so the
+  payer never learned the refund id and had no way to fetch the signed receipt
+  at `GET /v1/refunds/{id}`. The refund is now reported on stderr on both the
+  direct response and async job polls, and `--json` adds a machine-readable
+  `REFUND_JSON` line.
+- **A poll response carrying refund headers is treated as terminal.** An async
+  job that failed after payment previously kept polling until the 10-minute
+  timeout instead of stopping at the refund.
+- **The receipt URL is validated and printed bare.** It arrives in a header
+  from whatever endpoint was called, so it is accepted only as an `http(s)`
+  URL and never printed inside a copyable shell command — a value carrying
+  shell metacharacters cannot become a command the payer pastes.
+- **New: `references/verifying-refunds.md`.** Payer-side walkthrough from "my
+  call failed" to `VALID`: read the id, poll until the receipt is signed
+  (~25s), take the signer from `/health`, verify the Ed25519 signature over
+  the `rozo-receipt-json-v1` canonicalisation, and check both transactions on
+  Stellar. Includes a one-line tamper that flips the result to `INVALID`.
+
+---
+
 ## v1.8.5 — 2026-08-11
 
 Documentation corrections from the ClawHub security review (clawscan
