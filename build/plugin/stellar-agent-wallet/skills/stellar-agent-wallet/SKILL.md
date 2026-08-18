@@ -450,6 +450,7 @@ Every command accepts the same base flags:
 - `references/sponsored-mode.md` — why sponsored is the only cross-compat path
 - `references/sdk-api-cheatsheet.md` — common imports and constants
 - `references/mainnet-checklist.md` — before going to pubnet
+- `references/verifying-refunds.md` — a paid call failed: get the refund id and verify the signed receipt yourself
 
 ## Files in this skill
 
@@ -461,7 +462,8 @@ stellar-agent-wallet/
 │   ├── mpp-charge-spec.md
 │   ├── sponsored-mode.md
 │   ├── sdk-api-cheatsheet.md
-│   └── mainnet-checklist.md
+│   ├── mainnet-checklist.md
+│   └── verifying-refunds.md
 ├── scripts/
 │   ├── generate-keypair.ts           ← writes .stellar-secret with mode 600
 │   └── src/                          ← shared library code

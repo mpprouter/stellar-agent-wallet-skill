@@ -81,6 +81,11 @@ Want to understand the 402 protocol itself rather than the CLI? See
 `references/402-dialects-showcase.md` — a real dual-dialect 402 decoded
 field by field.
 
+Paid for a call that failed? The router refunds automatically and
+`pay-per-call` now prints the `Refund-Id` and receipt URL it returns.
+`references/verifying-refunds.md` walks a payer through fetching that
+receipt and verifying its Ed25519 signature without trusting us.
+
 ## Security
 
 This skill is a **wallet**. It signs Stellar transactions with a private

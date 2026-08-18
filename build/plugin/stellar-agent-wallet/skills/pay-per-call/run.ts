@@ -28,6 +28,7 @@ import { loadSecretFromBase } from "../../scripts/src/secret.js";
 import { Keypair } from "@stellar/stellar-sdk";
 import { readBalances, totalUsdc } from "../../scripts/src/balance.js";
 import { decodeReceipt, explorerUrl } from "../../scripts/src/receipt.js";
+import { parseRefundHeaders, formatRefundLines } from "../../scripts/src/refund.js";
 
 interface CmdArgs {
   url?: string;
@@ -285,7 +286,20 @@ function reportReceipt(opts: {
   }
 }
 
+/**
+ * Surface an automatic refund. The router reports it only in headers, so a
+ * client that prints just the body strands the payer without the id needed
+ * to fetch the signed receipt from `GET /v1/refunds/{id}`.
+ */
+function reportRefund(res: Response, jsonMode: boolean): void {
+  const refund = parseRefundHeaders(res.headers, res.url);
+  if (!refund) return;
+  for (const line of formatRefundLines(refund)) console.error(line);
+  if (jsonMode) console.error(`REFUND_JSON ${JSON.stringify(refund)}`);
+}
+
 async function dumpResponse(res: Response, jsonMode: boolean) {
+  reportRefund(res, jsonMode);
   if (!res.ok && res.status !== 202) {
     console.error(`❌ ${res.status} ${res.statusText}`);
     console.error(await res.text());
@@ -342,6 +356,7 @@ async function pollJobStatus(
 
       // Job completed (or unknown status) — dump result
       console.error(`✅ Job completed after ${attempt} polls`);
+      reportRefund(res, jsonMode);
       console.log(
         jsonMode ? JSON.stringify(body) : JSON.stringify(body, null, 2),
       );
@@ -351,6 +366,14 @@ async function pollJobStatus(
     if (res.status === 404) {
       console.error(`❌ Job not found (expired or invalid)`);
       process.exit(1);
+    }
+
+    // An async job that failed after payment is refunded by the router, which
+    // reports it in headers on the (non-2xx) poll response. Terminal — stop
+    // polling and hand the payer the refund id.
+    if (parseRefundHeaders(res.headers, res.url)) {
+      await dumpResponse(res, jsonMode);
+      return true;
     }
 
     console.error(
