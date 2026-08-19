@@ -13,7 +13,7 @@ description: >
   user shares a G... address with a payment intent.
 metadata:
   author: Shawn Yu
-  version: 1.8.5
+  version: 1.8.7
   license: MIT
   runtime: node
   homepage: https://www.mpprouter.dev/

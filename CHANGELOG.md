@@ -9,6 +9,19 @@ Published: https://clawhub.ai/shawnmuggle/stellar-agentic-wallet
 
 ---
 
+## v1.8.7 — 2026-08-19
+
+Ships refund verification as a runnable script instead of a copy-paste snippet,
+and corrects the documented refund latency. No change to signing or payment
+behaviour.
+
+- New `scripts/verify-refund.mjs`: polls a refund receipt until it is signed
+  (`--wait`, 180s default timeout) and verifies the Ed25519 signature against
+  the signers published at `/health`. Read-only; exit 0 = VALID.
+- Refund latency guidance corrected from "~25s" to **within 1–2 minutes**: the
+  router's refund signer runs on a once-per-minute cron, so the old figure was
+  a lucky sample (measured range 22s–68s, rare slower outliers).
+
 ## v1.8.6 — 2026-08-18
 
 Makes an automatic refund visible to the payer, and documents how to verify the
