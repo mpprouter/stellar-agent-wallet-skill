@@ -79,9 +79,17 @@ Once Stellar confirms the refund transaction, the same URL returns the
 **signed** receipt: `outcome` becomes `refunded_full` (or `refunded_partial`),
 and the response gains `signature`, `algorithm`, and `signer`.
 
-Refunds normally land on-chain in **about 25 seconds** (operator measurement
-against production, 2026-08-18; the worked example in the spec took 62s).
-Poll rather than assume:
+Refunds are signed by a once-per-minute cron on the router, so expect the
+refund to land on-chain **within 1–2 minutes** of the failed call (operator
+guidance, 2026-08-19; measured samples range from ~22s to 68s, with rare
+slower outliers). Poll rather than assume — the skill ships a script that
+polls and then verifies in one step:
+
+```bash
+node scripts/verify-refund.mjs $REFUND_ID --wait
+```
+
+Or by hand:
 
 ```bash
 until curl -s "https://apiserver.mpprouter.dev/v1/refunds/$REFUND_ID" \
@@ -121,8 +129,10 @@ The signature is Ed25519 over a canonical serialisation of the `receipt`
 object (`rozo-receipt-json-v1`): `JSON.stringify` with keys in exactly this
 order, omitting absent ones. Do not re-serialise with your own key order.
 
-Save as `verify-refund.mjs`, then `node verify-refund.mjs <refund_id>`. The
-only dependency is `@stellar/stellar-sdk`, already installed in this skill:
+The skill ships this as `scripts/verify-refund.mjs` (with `--wait` polling
+built in) — `node scripts/verify-refund.mjs <refund_id> [--wait]`. The
+only dependency is `@stellar/stellar-sdk`, already installed in this skill.
+The core of it:
 
 ```js
 import { Keypair, StrKey } from '@stellar/stellar-sdk'
@@ -211,7 +221,7 @@ it.
 ## Checklist
 
 1. `Refund-Id` present on the failed response → a refund exists.
-2. `GET /v1/refunds/{id}` leaves `refund_pending` (~25s) → refund confirmed on-chain.
+2. `GET /v1/refunds/{id}` leaves `refund_pending` (within 1–2 min) → refund confirmed on-chain.
 3. `signer.stellar_address` ∈ `/health` current + retired → the right key.
 4. Ed25519 verify over `rozo-receipt-json-v1` → `VALID`.
 5. `payment_tx` and `refund_tx` both successful on Stellar, amounts reversing.
