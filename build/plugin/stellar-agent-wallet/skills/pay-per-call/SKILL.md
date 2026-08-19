@@ -148,9 +148,11 @@ response and on async job polls alike:
 
 With `--json`, a machine-readable `REFUND_JSON {...}` line is emitted too.
 
-Fetch that URL until `outcome` leaves `refund_pending` (~25s) and you get a
-signed receipt you can verify yourself. Step-by-step, with runnable
-verification code: `references/verifying-refunds.md`.
+Fetch that URL until `outcome` leaves `refund_pending` — the router's refund
+signer runs on a once-per-minute cron, so expect the signed receipt **within
+1–2 minutes**. `node scripts/verify-refund.mjs <refund_id> --wait` polls and
+verifies in one step. Step-by-step walkthrough:
+`references/verifying-refunds.md`.
 
 ## Safety
 
