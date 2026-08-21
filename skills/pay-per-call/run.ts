@@ -30,6 +30,9 @@ import { readBalances, totalUsdc } from "../../scripts/src/balance.js";
 import { decodeReceipt, explorerUrl } from "../../scripts/src/receipt.js";
 import { parseRefundHeaders, formatRefundLines } from "../../scripts/src/refund.js";
 
+/** Consecutive ownership-proof failures tolerated before giving up on a poll loop. */
+const MAX_AUTH_FAILURES = 3;
+
 interface CmdArgs {
   url?: string;
   method: string;
@@ -315,32 +318,100 @@ async function dumpResponse(res: Response, jsonMode: boolean) {
 }
 
 /**
+ * Fetch a fresh ownership challenge for a job and sign it.
+ *
+ * The router burns the nonce on every successful poll (single-use, short TTL),
+ * so this has to run before each poll — the payment headers from the original
+ * request are NOT accepted here.
+ */
+async function buildJobAuthHeaders(
+  pollUrl: string,
+  keypair: Keypair,
+): Promise<Record<string, string> | { error: string }> {
+  const owner = keypair.publicKey();
+  const res = await fetch(`${pollUrl}/challenge`, {
+    headers: { "X-Stellar-Owner": owner },
+  });
+
+  if (!res.ok) {
+    let detail = "";
+    try {
+      detail = ((await res.json()) as any)?.error ?? "";
+    } catch {
+      /* non-JSON body */
+    }
+    return { error: `challenge ${res.status}${detail ? ` — ${detail}` : ""}` };
+  }
+
+  const body = (await res.json()) as { nonce?: string };
+  if (!body.nonce) return { error: "challenge response had no nonce" };
+
+  const signature = keypair
+    .sign(Buffer.from(body.nonce, "hex"))
+    .toString("base64");
+
+  return {
+    "X-Stellar-Owner": owner,
+    "X-Stellar-Nonce": body.nonce,
+    "X-Stellar-Signature": signature,
+  };
+}
+
+/**
  * Poll an async job until it completes or times out.
- * Uses the same auth headers from the initial request so the
- * router can verify the caller is the original payer.
+ *
+ * Each poll proves ownership of the paying Stellar account by signing a
+ * one-shot nonce from the router's /challenge endpoint.
  */
 async function pollJobStatus(
   pollUrl: string,
-  authHeaders: HeadersInit,
+  keypair: Keypair,
   jsonMode: boolean,
-  intervalMs = 5000,
+  intervalMs = 15000,
   timeoutMs = 600000, // 10 minutes
 ): Promise<boolean> {
   const start = Date.now();
   let attempt = 0;
+  let lastLine = "";
+  /** Consecutive auth failures. A few are transient (nonce race); a wall of
+   * them means the client and router disagree and retrying will never help. */
+  let authFailures = 0;
+
+  // Only narrate when something actually changed, so a long job does not
+  // scroll a wall of identical lines past the payer.
+  const say = (line: string) => {
+    if (line === lastLine) return;
+    lastLine = line;
+    console.error(`   ${line}`);
+  };
 
   while (Date.now() - start < timeoutMs) {
     attempt++;
     await new Promise((r) => setTimeout(r, intervalMs));
 
+    const authHeaders = await buildJobAuthHeaders(pollUrl, keypair);
+    if ("error" in authHeaders) {
+      authFailures++;
+      say(`ownership challenge failed (${authHeaders.error})`);
+      if (authFailures >= MAX_AUTH_FAILURES) {
+        console.error(
+          `❌ Could not prove job ownership after ${authFailures} attempts. ` +
+            `The payment settled — check the refund with verify-refund.mjs.`,
+        );
+        process.exit(1);
+      }
+      continue;
+    }
+
     const res = await fetch(pollUrl, { headers: authHeaders });
 
     if (res.status === 202 || res.status === 200) {
+      authFailures = 0;
       let body: any;
       try {
         body = await res.json();
       } catch {
-        console.error(`   Attempt ${attempt}: non-JSON response (${res.status})`);
+        say(`non-JSON response (${res.status})`);
         continue;
       }
 
@@ -350,7 +421,7 @@ async function pollJobStatus(
         status === "processing" ||
         status === "in_progress"
       ) {
-        console.error(`   Attempt ${attempt}: ${status}...`);
+        say(`${status}...`);
         continue;
       }
 
@@ -376,9 +447,21 @@ async function pollJobStatus(
       return true;
     }
 
-    console.error(
-      `   Attempt ${attempt}: unexpected status ${res.status}, retrying...`,
-    );
+    if (res.status === 401 || res.status === 403) {
+      authFailures++;
+      say(`poll rejected (${res.status}) — ownership proof not accepted`);
+      if (authFailures >= MAX_AUTH_FAILURES) {
+        console.error(
+          `❌ Router rejected ownership proof ${authFailures} times in a row. ` +
+            `The payment settled — check the refund with verify-refund.mjs.`,
+        );
+        process.exit(1);
+      }
+      continue;
+    }
+
+    authFailures = 0;
+    say(`unexpected status ${res.status}, retrying...`);
   }
 
   console.error(`❌ Timeout after ${timeoutMs / 1000}s waiting for job`);
@@ -675,7 +758,11 @@ async function runPayFlow(inputs: RunInputs): Promise<void> {
     if (pollUrl) {
       console.error(`⏳ Async job started (id=${jobId ?? "unknown"})`);
       console.error(`   Poll URL: ${pollUrl}`);
-      const result = await pollJobStatus(pollUrl, retryHeaders, args.json);
+      const result = await pollJobStatus(
+        pollUrl,
+        Keypair.fromSecret(signerConfig.secret),
+        args.json,
+      );
       if (result) return;
     } else {
       // No poll URL — just dump the 202 body
