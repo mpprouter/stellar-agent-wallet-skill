@@ -33,6 +33,10 @@ import { parseRefundHeaders, formatRefundLines } from "../../scripts/src/refund.
 /** Consecutive ownership-proof failures tolerated before giving up on a poll loop. */
 const MAX_AUTH_FAILURES = 3;
 
+/** Domain tag the router binds job-ownership proofs to. Must match
+ * rozo-mpprouter src/routes/job-status.ts. */
+const OWNERSHIP_DOMAIN = "mpprouter-job-ownership-v1";
+
 interface CmdArgs {
   url?: string;
   method: string;
@@ -326,6 +330,7 @@ async function dumpResponse(res: Response, jsonMode: boolean) {
  */
 async function buildJobAuthHeaders(
   pollUrl: string,
+  jobId: string,
   keypair: Keypair,
 ): Promise<Record<string, string> | { error: string }> {
   const owner = keypair.publicKey();
@@ -346,9 +351,20 @@ async function buildJobAuthHeaders(
   const body = (await res.json()) as { nonce?: string };
   if (!body.nonce) return { error: "challenge response had no nonce" };
 
-  const signature = keypair
-    .sign(Buffer.from(body.nonce, "hex"))
-    .toString("base64");
+  // NEVER sign the bare nonce bytes. This is the payer's spending key, and
+  // every Stellar signing payload — transactions, Soroban auth entries — is a
+  // bare 32-byte hash. A service that could choose the raw bytes we sign could
+  // hand back a transaction hash as the "nonce" and walk away with a valid
+  // signature over a transfer out of this wallet. Signing a printable,
+  // job-bound preimage instead makes the signature useless for anything else.
+  const message = new TextEncoder().encode(
+    `${OWNERSHIP_DOMAIN}:${jobId}:${body.nonce}`,
+  );
+  if (message.length === 32) {
+    return { error: "refusing to sign a 32-byte payload" };
+  }
+
+  const signature = keypair.sign(Buffer.from(message)).toString("base64");
 
   return {
     "X-Stellar-Owner": owner,
@@ -365,6 +381,7 @@ async function buildJobAuthHeaders(
  */
 async function pollJobStatus(
   pollUrl: string,
+  jobId: string,
   keypair: Keypair,
   jsonMode: boolean,
   intervalMs = 15000,
@@ -389,7 +406,7 @@ async function pollJobStatus(
     attempt++;
     await new Promise((r) => setTimeout(r, intervalMs));
 
-    const authHeaders = await buildJobAuthHeaders(pollUrl, keypair);
+    const authHeaders = await buildJobAuthHeaders(pollUrl, jobId, keypair);
     if ("error" in authHeaders) {
       authFailures++;
       say(`ownership challenge failed (${authHeaders.error})`);
@@ -758,8 +775,11 @@ async function runPayFlow(inputs: RunInputs): Promise<void> {
     if (pollUrl) {
       console.error(`⏳ Async job started (id=${jobId ?? "unknown"})`);
       console.error(`   Poll URL: ${pollUrl}`);
+      // The router binds the proof to the job id in the poll path, so take it
+      // from there rather than the (optional) X-Job-Id header.
       const result = await pollJobStatus(
         pollUrl,
+        new URL(pollUrl).pathname.split("/").pop() ?? "",
         Keypair.fromSecret(signerConfig.secret),
         args.json,
       );
