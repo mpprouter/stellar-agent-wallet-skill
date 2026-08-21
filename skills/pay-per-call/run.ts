@@ -334,9 +334,18 @@ async function buildJobAuthHeaders(
   keypair: Keypair,
 ): Promise<Record<string, string> | { error: string }> {
   const owner = keypair.publicKey();
-  const res = await fetch(`${pollUrl}/challenge`, {
-    headers: { "X-Stellar-Owner": owner },
-  });
+
+  // The payment has already settled by the time we get here, so a blip
+  // fetching or parsing the challenge must never abort the run — it has to
+  // come back as an error the poll loop can retry and eventually report.
+  let res: Response;
+  try {
+    res = await fetch(`${pollUrl}/challenge`, {
+      headers: { "X-Stellar-Owner": owner },
+    });
+  } catch (err) {
+    return { error: `challenge request failed — ${(err as Error).message}` };
+  }
 
   if (!res.ok) {
     let detail = "";
@@ -348,7 +357,12 @@ async function buildJobAuthHeaders(
     return { error: `challenge ${res.status}${detail ? ` — ${detail}` : ""}` };
   }
 
-  const body = (await res.json()) as { nonce?: string };
+  let body: { nonce?: string };
+  try {
+    body = (await res.json()) as { nonce?: string };
+  } catch {
+    return { error: "challenge response was not JSON" };
+  }
   if (!body.nonce) return { error: "challenge response had no nonce" };
 
   // NEVER sign the bare nonce bytes. This is the payer's spending key, and
@@ -420,7 +434,13 @@ async function pollJobStatus(
       continue;
     }
 
-    const res = await fetch(pollUrl, { headers: authHeaders });
+    let res: Response;
+    try {
+      res = await fetch(pollUrl, { headers: authHeaders });
+    } catch (err) {
+      say(`poll request failed (${(err as Error).message}), retrying...`);
+      continue;
+    }
 
     if (res.status === 202 || res.status === 200) {
       authFailures = 0;
