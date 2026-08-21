@@ -9,6 +9,31 @@ Published: https://clawhub.ai/shawnmuggle/stellar-agentic-wallet
 
 ---
 
+## v1.8.8 — 2026-08-21
+
+Fixes the async-job poll loop, which never authenticated and so hung on every
+paid call that returned a job. **Security: the poll's ownership proof is now
+domain-separated — this release must be paired with the matching router
+change, already live.**
+
+- **Async polls now prove ownership.** The loop reused the payment headers from
+  the original request; the router requires an Ed25519 signature over a nonce
+  from `GET /jobs/<id>/challenge`. Every poll returned 401, and 401 fell through
+  to a generic retry, so the CLI spun for the full 10-minute timeout and never
+  surfaced the refund id — even when the payment had already been refunded
+  on-chain minutes earlier.
+- **The signed payload is domain-separated.** The proof signs the UTF-8 bytes of
+  `mpprouter-job-ownership-v1:<jobId>:<nonce>`, never the bare 32-byte nonce.
+  Every Stellar signing payload — transactions, Soroban auth entries — is a bare
+  32-byte hash, so signing a service-chosen 32-byte value would let a malicious
+  service harvest a valid transaction signature from the payer's wallet. The CLI
+  additionally refuses outright to sign any 32-byte payload.
+- **401/403 are now terminal after 3 strikes** instead of retrying forever, and
+  point you at `scripts/verify-refund.mjs`. Transient network and JSON errors
+  stay retryable — the payment has already settled by that point.
+- **Poll interval 5s → 15s**, and a line is printed only when the status
+  actually changes, instead of one line per attempt.
+
 ## v1.8.7 — 2026-08-19
 
 Ships refund verification as a runnable script instead of a copy-paste snippet,
