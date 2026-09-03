@@ -42,6 +42,7 @@ refuses("https://invoice.rozo.ai/checkout", "rozo checkout without ?id refused")
 refuses("https://user:pw@crypto.stripe.com/pay/cs_abc", "embedded credentials refused");
 refuses("not-a-url", "non-URL refused");
 refuses("https://payments.coinbase.com.evil.tld/payment-links/pl_abc", "lookalike suffix host refused");
+refuses("https://payments.coinbase.com:444/payment-links/pl_abc", "non-default port on a whitelisted host refused");
 
 console.log("Unified shape — every provider produces the same keys");
 const KEYS = [

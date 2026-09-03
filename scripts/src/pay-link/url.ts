@@ -99,6 +99,16 @@ export function resolveLink(raw: string): ResolvedLink {
     throw new UnsupportedLinkError("URLs with embedded credentials are refused");
   }
 
+  // `hostname` excludes the port, so an alternate port would otherwise sail
+  // through the host check and let us POST at some unrelated service listening
+  // on e.g. payments.coinbase.com:444. The whitelist means the canonical
+  // HTTPS endpoint, nothing else on that host.
+  if (u.port && u.port !== "443") {
+    throw new UnsupportedLinkError(
+      `only the default HTTPS port is accepted (got port ${u.port})`,
+    );
+  }
+
   const host = u.hostname.toLowerCase();
   for (const p of PATTERNS) {
     if (!p.hosts.includes(host)) continue;

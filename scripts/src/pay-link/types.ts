@@ -129,7 +129,12 @@ export interface Receipt {
   tx_hash: string | null;
   amount: string | null;
   currency: string | null;
-  status: "dryrun" | "submitted" | "confirmed" | "refused" | "failed";
+  /**
+   * `pending` is written BEFORE the provider leg runs, as a reservation. It
+   * means "we may have moved money and do not yet know" — a retry must
+   * reconcile, not re-pay.
+   */
+  status: "dryrun" | "pending" | "submitted" | "confirmed" | "refused" | "failed";
   /** Digest that authorised this execution; ties a retry to its confirmation. */
   digest: string;
   at: string;

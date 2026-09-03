@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { loadFixture, normaliseFor } from "./src/pay-link/inspectors.js";
 import { evaluate, DEFAULT_POLICY, type PolicyConfig, type RefusalCode } from "./src/pay-link/policy.js";
 import { checkConfirmation, computeDigest, digestInputFrom } from "./src/pay-link/digest.js";
-import { findEntry, loadLedger, record, saveLedger, spendWindows } from "./src/pay-link/ledger.js";
+import { findEntry, loadLedger, record, saveLedger, settle, spendWindows } from "./src/pay-link/ledger.js";
 import type { UnifiedInspection } from "./src/pay-link/types.js";
 
 const FIX = join(dirname(fileURLToPath(import.meta.url)), "smoke-test-fixtures", "pay-link");
@@ -74,9 +74,23 @@ refusesWith(ok, cfg({ maxPerCallUsd: 1 }), "per_call_limit", "over per-payment c
 refusesWith(ok, cfg({ spentTodayUsd: 48 }), "daily_limit", "over rolling daily ceiling refused");
 refusesWith(ok, cfg({ spentThisMonthUsd: 198 }), "monthly_limit", "over rolling monthly ceiling refused");
 
+console.log("Refusal — non-USD pricing units (ceilings are USD-denominated)");
+refusesWith({ ...ok, currency: "BTC" }, cfg(), "unsupported_currency", "BTC-priced link refused rather than compared against USD ceilings");
+refusesWith({ ...ok, currency: null }, cfg(), "unsupported_currency", "unknown pricing unit refused");
+assert(evaluate({ ...ok, currency: "usdc" } as UnifiedInspection, cfg()).action === "auto", "USDC accepted as a dollar-pegged pricing unit");
+
 console.log("Refusal — merchant allow-list");
 refusesWith(ok, cfg({ merchantWhitelist: ["SomeoneElse"] }), "merchant_not_allowed", "merchant off the allow-list refused");
 assert(evaluate(ok, cfg({ merchantWhitelist: ["MuggleLink"] })).action === "auto", "allow-listed merchant passes (case-insensitive)");
+
+console.log("Case-sensitive address families");
+const solRail = { chain: "solana", token: "USDC", deposit_address: "AEEtekA2EBYVy3e5Xx8fD3GkjWSoCsLvLzdD6pZTgHiX" };
+const solIns = { ...ok, rails: [solRail] } as UnifiedInspection;
+refusesWith(solIns, cfg({ expectPayTo: solRail.deposit_address.toLowerCase() }), "payee_mismatch", "Solana address differing only in case is NOT accepted as the expected payee");
+assert(evaluate(solIns, cfg({ expectPayTo: solRail.deposit_address })).action === "auto", "exact Solana address accepted");
+const evmRail = { chain: "base", token: "USDC", deposit_address: "0xAbCdEf0123456789AbCdEf0123456789AbCdEf01" };
+const evmIns = { ...ok, rails: [evmRail] } as UnifiedInspection;
+assert(evaluate(evmIns, cfg({ expectPayTo: evmRail.deposit_address.toLowerCase() })).action === "auto", "EVM address matched case-insensitively (checksum case is not identity)");
 
 console.log("Confirmation gate");
 const big = { ...ok, amount: "20.00" } as UnifiedInspection;
@@ -93,6 +107,13 @@ assert((checkConfirmation("deadbeef", big) as any).code === "CONFIRMATION_STALE"
 const prev = digestInputFrom({ ...big, rails: [{ chain: "1500", token: "USDC", deposit_address: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" }] } as UnifiedInspection);
 assert((checkConfirmation("deadbeef", big, 0, prev) as any).code === "DEPOSIT_CHANGED", "deposit target moved since confirmation → DEPOSIT_CHANGED");
 assert(computeDigest(digestInputFrom(big)) !== computeDigest(digestInputFrom({ ...big, amount: "20.01" } as UnifiedInspection)), "digest changes when the amount changes");
+const sameAddrOtherChain = { ...big, rails: [{ ...big.rails[0], chain: "ethereum" }] } as UnifiedInspection;
+assert(computeDigest(digestInputFrom(big)) !== computeDigest(digestInputFrom(sameAddrOtherChain)), "digest changes when the chain changes (same address on another chain moves a different asset)");
+const otherToken = { ...big, rails: [{ ...big.rails[0], token: "USDT" }] } as UnifiedInspection;
+assert(computeDigest(digestInputFrom(big)) !== computeDigest(digestInputFrom(otherToken)), "digest changes when the token changes");
+const solA = { ...big, rails: [solRail] } as UnifiedInspection;
+const solB = { ...big, rails: [{ ...solRail, deposit_address: solRail.deposit_address.toLowerCase() }] } as UnifiedInspection;
+assert(computeDigest(digestInputFrom(solA)) !== computeDigest(digestInputFrom(solB)), "digest does not case-fold a Solana address");
 
 console.log("Ledger — idempotency and rolling windows");
 const dir = mkdtempSync(join(tmpdir(), "paylink-"));
@@ -109,6 +130,12 @@ const dryOnly = record({ version: 1, entries: [] }, { url: ok.url, digest: dgst,
 assert(spendWindows(dryOnly).today === 0, "dry runs never consume the spend ceiling");
 const old = record({ version: 1, entries: [] }, { url: ok.url, digest: dgst, amount: 5, currency: "USD", status: "submitted", tx_hash: "x", at: new Date(Date.now() - 40 * 24 * 3600_000).toISOString() });
 assert(spendWindows(old).month === 0, "spend older than 30 days leaves the monthly window");
+const pending = record({ version: 1, entries: [] }, { url: ok.url, digest: dgst, amount: 5, currency: "USD", status: "pending", tx_hash: null, at: new Date().toISOString() });
+assert(spendWindows(pending).today === 5, "an unsettled reservation consumes the ceiling — money may already have moved");
+assert(findEntry(pending, ok.url, dgst)?.status === "pending", "reservation is visible to a retry, which must refuse rather than re-pay");
+const settled = settle(pending, ok.url, dgst, { status: "dryrun" });
+assert(settled.entries.length === 1 && settled.entries[0].status === "dryrun", "settle updates the reservation in place, not appending a second spend row");
+assert(spendWindows(settled).today === 0, "a reservation settled to dryrun releases the ceiling");
 
 console.log("Coverage — every refusal code is exercised");
 const ALL: RefusalCode[] = [
@@ -116,6 +143,7 @@ const ALL: RefusalCode[] = [
   "missing_deposit_address", "malformed_address", "blacklisted_address",
   "amount_unknown", "amount_mismatch", "currency_mismatch", "payee_mismatch",
   "merchant_not_allowed", "per_call_limit", "daily_limit", "monthly_limit",
+  "unsupported_currency",
 ];
 for (const c of ALL) assert(covered.has(c), `refusal path covered: ${c}`);
 

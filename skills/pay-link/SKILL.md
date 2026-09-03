@@ -41,7 +41,10 @@ export PAY_STRIPE_INSPECTOR=/abs/path/to/pay-stripe-crypto/scripts/dist/get-stri
 ```
 
 Not set → a clear `inspector_unavailable` error, never a silent guess. For
-testing and demos, `--fixture <file>` reads a recorded response instead.
+testing and demos, `--fixture <file>` reads a recorded response instead —
+accepted on `inspect`, and on `pay` only together with `--dryrun`. A fixture on
+a live payment path would let benign local JSON satisfy every check while the
+real link is what gets paid.
 
 ## The unified inspection shape
 
@@ -99,7 +102,9 @@ not get nudged through one fix at a time.
 
 | Code | Refused when |
 |---|---|
-| `unsupported_link` | URL is not one of the four whitelisted shapes, is not https, or carries embedded credentials |
+| `unsupported_link` | URL is not one of the four whitelisted shapes, is not https, uses a non-default port, or carries embedded credentials |
+| `fixture_not_allowed` | `--fixture` was used on the `pay` path without `--dryrun` |
+| `reservation_open` | a previous run opened a reservation for this exact `(url, digest)` and never settled it — reconcile before retrying |
 | `not_payable` | upstream says paid / used / expired / cancelled / unknown — a `paid` link would double-pay |
 | `expired` | `quote_expires_at` (else `expires_at`) is in the past |
 | `stale_inspection` | inspection older than 300s, or has no usable timestamp |
@@ -109,9 +114,10 @@ not get nudged through one fix at a time.
 | `malformed_address` | address fails the chain's shape check (truncation, wrong chain) |
 | `blacklisted_address` | address is on the compromised-wallet blacklist |
 | `amount_unknown` | no definite amount, so exact-amount and limit checks cannot run |
+| `unsupported_currency` | priced in something other than USD / USDC / USDT — every ceiling here is USD-denominated, and there is no trusted rate to convert with, so it is refused rather than guessed |
 | `amount_mismatch` | differs from `--expect-amount` |
 | `currency_mismatch` | differs from `--expect-currency` |
-| `payee_mismatch` | deposit address differs from `--expect-pay-to` |
+| `payee_mismatch` | deposit address differs from `--expect-pay-to` (compared **chain-aware**: case-insensitive for EVM hex, exact for Stellar / Solana / Tron, where case is part of the address) |
 | `merchant_not_allowed` | `--merchant-allow` is set and this merchant is not on it |
 | `per_call_limit` | above the per-payment ceiling (default $25) |
 | `daily_limit` | would push rolling 24h spend over the ceiling (default $50) |
@@ -133,8 +139,11 @@ mask addresses to first-6 + last-4.
 ## Confirmation digest
 
 Above the auto ceiling, `pay` prints a 16-hex digest over exactly the facts that
-decide where money goes — url, amount, currency, deposit address, memo — and
-refuses until it is echoed back with `--confirm`. Cosmetic upstream churn does
+decide where money goes — url, amount, currency, and the chosen rail's chain,
+token, deposit address and memo — and refuses until it is echoed back with
+`--confirm`. Chain and token are in the digest because an EVM deposit address
+is often the same string on several chains: binding only the address would let
+a confirmed Base/USDC payment be re-pointed at Ethereum/USDT unnoticed. Cosmetic upstream churn does
 not invalidate a confirmation; a moved address does.
 
 - `NOT_CONFIRMED` — no `--confirm` supplied. The digest to use is printed.
@@ -152,9 +161,27 @@ Every execution emits a machine-readable receipt:
 ```
 
 Retries are idempotent on `(url, digest)`, recorded in a local ledger
-(`.pay-link-ledger.json`, mode 600, public facts only). Re-running a command
-after a timeout replays the stored receipt instead of paying again. Dry runs
-never consume the spend ceilings.
+(`.pay-link-ledger.json`, mode 600, public facts only).
+
+The ledger is written **before** anything could move money, not after: a
+`pending` reservation row goes in first, and is settled to its real outcome
+afterwards. So the three retry cases are distinguishable —
+
+- prior run **settled** (`submitted` / `confirmed`) → the stored receipt is
+  replayed, nothing is paid again;
+- prior run left a **`pending`** reservation → `reservation_open` refusal.
+  Either another run is in flight or one died between paying and recording;
+  money may already have moved, so this must be reconciled by hand, never
+  retried blindly;
+- no entry → proceed.
+
+An unsettled reservation also consumes the spend ceilings, for the same reason.
+Dry runs do not.
+
+**This is a local file, not a distributed lock.** It closes the crash window
+and the obvious double-run, but before the real provider leg is enabled that
+leg must also be idempotent on its own order id — two machines sharing a wallet
+would not see each other's ledger.
 
 ## Execution status
 

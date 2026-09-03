@@ -66,6 +66,30 @@ export function saveLedger(file: LedgerFile, path = DEFAULT_LEDGER_PATH): void {
   writeFileSync(path, JSON.stringify(file, null, 2) + "\n", { mode: 0o600 });
 }
 
+/**
+ * Replace the last entry for a `(url, digest)` in place, or append it.
+ *
+ * Used to settle a reservation: the `pending` row written before execution
+ * becomes `submitted`/`failed` afterwards, rather than leaving two rows that
+ * both look like spend.
+ */
+export function settle(
+  file: LedgerFile,
+  url: string,
+  digest: string,
+  patch: Partial<Omit<LedgerEntry, "key" | "url" | "digest">>,
+): LedgerFile {
+  const key = idempotencyKey(url, digest);
+  const entries = [...file.entries];
+  for (let i = entries.length - 1; i >= 0; i--) {
+    if (entries[i].key === key) {
+      entries[i] = { ...entries[i], ...patch };
+      return { ...file, entries };
+    }
+  }
+  return file;
+}
+
 /** Previously recorded execution for this `(url, digest)`, if any. */
 export function findEntry(
   file: LedgerFile,
@@ -89,7 +113,10 @@ export function spendWindows(
   let today = 0;
   let month = 0;
   for (const e of file.entries) {
-    if (e.status !== "submitted" && e.status !== "confirmed") continue;
+    // `pending` counts: a reservation means money may already have moved, so
+    // it must consume the ceiling until it is reconciled. Only `dryrun`,
+    // `refused` and `failed` are known not to have moved anything.
+    if (e.status !== "submitted" && e.status !== "confirmed" && e.status !== "pending") continue;
     const at = Date.parse(e.at);
     if (Number.isNaN(at)) continue;
     const age = t - at;

@@ -39,6 +39,7 @@ import {
   loadLedger,
   record,
   saveLedger,
+  settle,
   spendWindows,
 } from "../../scripts/src/pay-link/ledger.js";
 import { maskAddress } from "../../scripts/src/pay-link/blacklist.js";
@@ -152,6 +153,19 @@ async function main(): Promise<void> {
     throw e;
   }
 
+  // A fixture replaces the live provider response with arbitrary local JSON.
+  // On the `pay` path that would let a benign fixture satisfy every policy
+  // check while the live URL — merchant, amount, status, expiry, destination
+  // all unverified — is what actually gets paid. Fixtures are therefore an
+  // inspection/dry-run facility only.
+  if (args.fixture && args.command === "pay" && !args.dryrun) {
+    const msg =
+      "--fixture cannot be used on the pay path without --dryrun: policy would " +
+      "validate the fixture while the live link is what gets paid.";
+    console.error(args.json ? JSON.stringify({ ok: false, code: "fixture_not_allowed", message: msg }, null, 2) : `REFUSED: ${msg}`);
+    process.exit(2);
+  }
+
   let ins: UnifiedInspection;
   try {
     ins = await inspect(link.provider, link.url, link.reference, { fixture: args.fixture });
@@ -199,6 +213,18 @@ async function main(): Promise<void> {
 
   // Idempotency: this exact (url, digest) already executed.
   const prior = findEntry(ledgerFile, ins.url, digest);
+  if (prior && prior.status === "pending") {
+    // A reservation exists with no outcome recorded: either another process is
+    // executing right now, or a previous run died between submitting and
+    // recording. Both mean money may already have moved, so we refuse and ask
+    // for reconciliation rather than paying a second time.
+    const msg =
+      `A reservation for this exact payment (url + digest) was opened at ${prior.at} and never settled. ` +
+      `Another run may be in flight, or a previous run may have paid without recording it. ` +
+      `Reconcile against the provider before retrying; if it definitely did not pay, remove that entry from ${args.ledger}.`;
+    console.error(args.json ? JSON.stringify({ ok: false, code: "reservation_open", message: msg }, null, 2) : `REFUSED: ${msg}`);
+    process.exit(2);
+  }
   if (prior && (prior.status === "submitted" || prior.status === "confirmed")) {
     const receipt: Receipt = {
       provider: ins.provider,
@@ -235,10 +261,28 @@ async function main(): Promise<void> {
     }
   }
 
-  // Everything passed. Execution is intentionally dry-run only in this
-  // release: the real leg calls the provider's own pay script, which is a
-  // separate, separately-approved integration. We say so rather than
-  // reporting a success that moved nothing.
+  // Reserve BEFORE doing anything that could move money. The reservation is
+  // what makes a retry safe: a crash between here and the settle() below
+  // leaves a `pending` row, which the check above turns into a refusal rather
+  // than a second payment. (A local file is not a distributed lock — the
+  // provider leg must also be idempotent on its own order id before it is
+  // enabled. See skills/pay-link/SKILL.md.)
+  const at = new Date().toISOString();
+  const reserved = record(ledgerFile, {
+    url: ins.url,
+    digest,
+    amount: decision.amountUsd,
+    currency: ins.currency,
+    status: "pending",
+    tx_hash: null,
+    at,
+  });
+  saveLedger(reserved, args.ledger);
+
+  // Execution is intentionally dry-run only in this release: the real leg calls
+  // the provider's own already-audited pay script, which is a separate,
+  // separately-approved integration. We say so rather than reporting a success
+  // that moved nothing.
   const receipt: Receipt = {
     provider: ins.provider,
     reference: ins.reference,
@@ -247,17 +291,11 @@ async function main(): Promise<void> {
     currency: ins.currency,
     status: "dryrun",
     digest,
-    at: new Date().toISOString(),
+    at,
   };
-  saveLedger(record(ledgerFile, {
-    url: ins.url,
-    digest,
-    amount: decision.amountUsd,
-    currency: ins.currency,
-    status: "dryrun",
-    tx_hash: null,
-    at: receipt.at,
-  }), args.ledger);
+  // Nothing was submitted, so the reservation settles straight to `dryrun`,
+  // which does not consume the spend ceilings.
+  saveLedger(settle(reserved, ins.url, digest, { status: "dryrun" }), args.ledger);
 
   console.log(JSON.stringify({
     ok: true,

@@ -19,6 +19,7 @@
 
 import type { UnifiedInspection } from "./types.js";
 import { lookupBlacklist, maskAddress } from "./blacklist.js";
+import { addressLooksValid, sameAddress } from "./address.js";
 
 /** Stable machine codes for every way this layer can refuse. */
 export type RefusalCode =
@@ -31,6 +32,7 @@ export type RefusalCode =
   | "malformed_address"
   | "blacklisted_address"
   | "amount_unknown"
+  | "unsupported_currency"
   | "amount_mismatch"
   | "currency_mismatch"
   | "payee_mismatch"
@@ -96,6 +98,13 @@ export const DEFAULT_POLICY: Omit<
   maxInspectionAgeSeconds: 300,
 };
 
+/**
+ * Pricing units the USD-denominated ceilings may be applied to directly.
+ * "USDC"/"USDT" are dollar-pegged stablecoins quoted 1:1 by every provider we
+ * read; anything else needs a rate we do not have.
+ */
+const ALLOWED_CURRENCIES = new Set(["USD", "USDC", "USDT"]);
+
 /** Hard cap on `--max-auto`, same value and same reasoning as pay-per-call. */
 export const MAX_AUTO_CEILING_USD = 5;
 
@@ -103,23 +112,6 @@ export type Decision =
   | { action: "refuse"; refusals: Refusal[] }
   | { action: "confirm"; reasons: string[]; amountUsd: number }
   | { action: "auto"; amountUsd: number };
-
-/** Loose per-chain address shape checks. Deliberately conservative: this
- *  catches truncation, an address pasted for the wrong chain, and obvious
- *  corruption. It is not a checksum validator. */
-function addressLooksValid(chain: string, address: string): boolean {
-  const c = chain.toLowerCase();
-  const a = address.trim();
-  if (/^stellar$/.test(c) || c === "1500") return /^[GMC][A-Z2-7]{55}$/.test(a);
-  if (c === "tron" || c === "728126428") return /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(a);
-  if (c === "solana" || c === "792703809") return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(a);
-  // Everything else in our world is EVM-shaped (base, ethereum, arbitrum, …).
-  if (/^0x/i.test(a) || /^\d+$/.test(c) || ["base", "ethereum", "arbitrum", "polygon", "optimism", "bnb"].includes(c)) {
-    return /^0x[0-9a-fA-F]{40}$/.test(a);
-  }
-  // Unknown chain naming: require something long enough not to be a stub.
-  return a.length >= 20;
-}
 
 function parseAmount(v: string | null): number | null {
   if (v === null) return null;
@@ -229,9 +221,8 @@ export function evaluate(
         });
       }
       if (cfg.expectPayTo) {
-        const same =
-          cfg.expectPayTo.trim().toLowerCase() ===
-          rail.deposit_address.trim().toLowerCase();
+        // Chain-aware: case matters on Stellar/Solana/Tron. See address.ts.
+        const same = sameAddress(rail.chain, cfg.expectPayTo, rail.deposit_address);
         if (!same) {
           refusals.push({
             code: "payee_mismatch",
@@ -283,6 +274,20 @@ export function evaluate(
         message: `Link is priced in ${ins.currency ?? "an unknown unit"}, expected ${cfg.expectCurrency}.`,
       });
     }
+  }
+
+  // Every ceiling in this config is denominated in USD. Comparing a raw
+  // numeric amount against them only means anything if the pricing unit IS
+  // USD — otherwise "0.1 BTC" reads as 0.1 and sails under a $5 auto ceiling.
+  // We have no trusted rate source here, so anything that is not USD is
+  // refused rather than converted with a guess.
+  if (!ins.currency || !ALLOWED_CURRENCIES.has(ins.currency.trim().toUpperCase())) {
+    refusals.push({
+      code: "unsupported_currency",
+      message:
+        `Link is priced in ${ins.currency ?? "an unknown unit"}, but every limit in this policy is denominated in USD. ` +
+        `Without a trusted conversion rate the ceilings are meaningless, so this is refused rather than guessed.`,
+    });
   }
 
   /* 5. merchant ---------------------------------------------------------- */
