@@ -9,6 +9,43 @@ Published: https://clawhub.ai/shawnmuggle/stellar-agentic-wallet
 
 ---
 
+## Unreleased
+
+Adds `pay-link`: inspect a payment link from a known provider, run it through a
+policy layer, and only then consider paying it. **Read-only and dry-run in this
+release — it moves no funds.**
+
+- **`pay-link inspect <url>`** normalises Coinbase payment links / v3 payment
+  sessions, Stripe Crypto Payin sessions and Rozo Intent checkouts into one
+  shape: `provider, merchant{id,display_name,verified}, amount, currency,
+  rails[], expires_at, quote_expires_at, fulfillment_status, fees{5 lines},
+  risks[]`. Field names track the unified Payment Intent design spec so the two
+  stay compatible. A value we could not read is `null` — never `0`, never a
+  guess.
+- **No generic URL fetcher, by design.** Four whitelisted link shapes; anything
+  else is refused *without a request being made*. A blind fetcher would turn
+  every link put in front of the agent into a signing prompt.
+- **Policy layer with 17 named refusal codes**, all fail-closed: upstream state
+  (a `paid` link would double-pay), quote/link expiry, inspection staleness,
+  missing or malformed deposit address, compromised-wallet blacklist, amount /
+  currency / payee expectations, merchant allow-list, and per-call, rolling
+  daily and rolling monthly ceilings. All refusals are reported together.
+- **Blacklist checked twice** — as a `high` risk at inspect time and as a hard
+  refusal before payment — so a caller who only runs `inspect` still sees it.
+  Public addresses only; messages mask to first-6 + last-4.
+- **`--confirm <digest>` handshake** above the `--max-auto` ceiling (default and
+  hard cap $5, same reasoning as `pay-per-call`), with `NOT_CONFIRMED`,
+  `CONFIRMATION_STALE` and `DEPOSIT_CHANGED` distinguished — a moved deposit
+  address never silently inherits an old confirmation.
+- **Idempotent on `(url, digest)`** via a local mode-600 ledger holding public
+  facts only; a retry replays the stored receipt instead of paying twice, and
+  dry runs never consume the spend ceilings.
+- Two fixture-driven smoke suites (`npm run test:pay-link`), no network and no
+  wallet. The policy suite asserts its own refusal-code coverage is complete,
+  so adding a refusal without a test fails the build.
+
+---
+
 ## v1.8.8 — 2026-08-21
 
 Fixes the async-job poll loop, which never authenticated and so hung on every

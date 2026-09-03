@@ -37,6 +37,7 @@ individual `skills/*/SKILL.md` for each command's flags. The entry points:
 | Call a 402-gated API and pay | `./node_modules/.bin/tsx skills/pay-per-call/run.ts <url> …` |
 | Send USDC | `./node_modules/.bin/tsx skills/send-payment/run.ts …` |
 | Bridge USDC cross-chain | `./node_modules/.bin/tsx skills/bridge/run.ts …` |
+| Inspect / pay a payment link | `./node_modules/.bin/tsx skills/pay-link/run.ts inspect <url> --json` |
 
 > The local binary is used deliberately rather than `npx tsx`. On some setups
 > `npx tsx` resolves to `npm run tsx`, which fails with
