@@ -186,8 +186,12 @@ This skill contacts these endpoints on its own:
 | `intentapiv4.rozo.ai` | Rozo cross-chain payment intents |
 | `horizon.stellar.org` | Stellar Horizon REST API (mainnet) |
 | `mainnet.sorobanrpc.com` | Soroban RPC (mainnet) |
+| `payments.coinbase.com` | `pay-link` inspection of Coinbase payment links / sessions (via the pay-coinbase inspector) |
+| `crypto.stripe.com` | `pay-link` inspection of Stripe Crypto Payin sessions (via the pay-stripe-crypto inspector) |
 
 In addition, `pay-per-call` fetches whatever 402 service URL you point it at, plus any poll URL that service returns — that is its purpose, and those destinations are chosen per call, not fixed here. Pass `--expect-pay-to` / `--expect-amount` so a malicious or misconfigured service cannot redirect the payment.
+
+`pay-link`, by contrast, fetches **only** the four whitelisted link shapes in `skills/pay-link/SKILL.md` — it has no generic URL fetcher, so an arbitrary URL handed to it is refused without a request being made.
 
 Wallet addresses, payment amounts, and bridge recipients are transmitted to these providers as part of normal operation. Use testnet endpoints while evaluating; override with `--horizon-url` and `--rpc-url` if needed.
 
@@ -208,7 +212,7 @@ Automated scanners will flag the following. These are intentional design choices
 
 ## Overview
 
-Client-only Stellar wallet for AI agents. Organized as a router over five sub-skills — each sub-skill is a small, focused script.
+Client-only Stellar wallet for AI agents. Organized as a router over eight sub-skills — each sub-skill is a small, focused script.
 
 ## Sub-skills
 
@@ -220,6 +224,7 @@ Client-only Stellar wallet for AI agents. Organized as a router over five sub-sk
 | `pay-per-call` | Call an x402 **or** MPP service endpoint and pay automatically (both wire formats) | "call this paid API", "summarize the doc with parallel.ai via mpprouter.dev" |
 | `send-payment` | Cross-chain USDC payout via Rozo | "pay 0x... on base", "transfer usdc to <addr>" |
 | `send-raw` | One Stellar Classic payment, exactly as specified (address + asset + amount + memo). Creates nothing. | "pay this deposit address with memo X", "fund this invoice", "submit the Stellar leg" |
+| `pay-link` | Inspect a Coinbase / Stripe Crypto / Rozo Intent payment link, run it through a policy layer, then pay it. Read-only `inspect` always available. | "inspect this payment link", "pay this coinbase link", "what is this invoice", "check before paying" |
 | `bridge` | Move your own USDC Stellar→other chain | "bridge to base", "deposit usdc onto ethereum" |
 
 Each sub-skill has its own `SKILL.md` and `run.ts` in `skills/<name>/`.
@@ -370,7 +375,21 @@ When triggered, read the user's intent and dispatch:
 3. **On ambiguity, ask.** Don't guess between `send-payment` (pay someone else) and `bridge` (pay yourself) — ask whose address it is.
 4. **Read the relevant sub-skill's SKILL.md before running its script.** Each sub-skill has its own preconditions and confirmation gates.
 5. **Prefer Stellar as source chain.** When the user has a Stellar wallet configured (`.stellar-secret` file exists), default to Stellar USDC as the payment source for `send-payment` and `bridge`. Stellar has the lowest fees and fastest settlement via Rozo. Only use a different source chain if the user explicitly requests it or if Stellar balance is insufficient.
-6. **Funding a deposit address someone else issued.** If another system — the
+6. **Someone handed you a payment link URL.** If the thing to pay is a *link*
+   (`payments.coinbase.com/payment-links/…` or `/payment-sessions/…`,
+   `crypto.stripe.com/pay/…`, `invoice.rozo.ai/checkout?id=…`), use
+   **`pay-link`** — always `inspect` first:
+
+   ```bash
+   ./node_modules/.bin/tsx skills/pay-link/run.ts inspect <url> --json
+   ```
+
+   It refuses any URL outside those shapes rather than fetching it. Do not
+   hand a payment link to `send-raw` or `send-payment`: neither knows how to
+   read the invoice, so neither can check the merchant, the amount, the
+   expiry or the blacklist before you sign.
+
+7. **Funding a deposit address someone else issued.** If another system — the
    `rozo-intents` skill, `rozo-checkout`, an exchange, an invoice — has already
    produced a Stellar deposit address (`G...`) plus a memo, use **`send-raw`**:
 
@@ -475,7 +494,15 @@ stellar-agent-wallet/
 │       ├── pay-engine.ts             ← 402 parse + retry orchestrator
 │       ├── x402.ts                   ← x402 envelope encoder
 │       ├── mpp-envelope.ts           ← MPP charge envelope encoder
-│       └── balance.ts                ← shared balance reader (onboard + check-balance)
+│       ├── balance.ts                ← shared balance reader (onboard + check-balance)
+│       └── pay-link/                  ← payment-link inspection + policy
+│           ├── types.ts               ← the unified inspection + receipt shape
+│           ├── url.ts                 ← provider whitelist (no generic fetcher)
+│           ├── inspectors.ts          ← three provider normalisers
+│           ├── policy.ts              ← limits, expectations, refusal codes
+│           ├── blacklist.ts           ← compromised-wallet addresses (public only)
+│           ├── digest.ts              ← --confirm handshake
+│           └── ledger.ts              ← spend windows + (url, digest) idempotency
 └── skills/                         ← sub-skills (run directly)
     ├── onboard/
     │   ├── SKILL.md
@@ -498,7 +525,10 @@ stellar-agent-wallet/
     ├── send-raw/
     │   ├── SKILL.md
     │   └── run.ts                    ← one Classic payment, address+asset+amount+memo as given
-    └── bridge/
+    ├── bridge/
+    │   ├── SKILL.md
+    │   └── run.ts                    ← thin wrapper over send-payment
+    └── pay-link/
         ├── SKILL.md
-        └── run.ts                    ← thin wrapper over send-payment
+        └── run.ts                    ← inspect + policy-gate a payment link
 ```

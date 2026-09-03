@@ -1,0 +1,19 @@
+{
+  "protocolVersion": "v3",
+  "derived": {
+    "status": "PAYMENT_SESSION_STATUS_CREATED",
+    "payable": true,
+    "used": false,
+    "expired": false,
+    "merchantName": "OpenRouter",
+    "merchantId": "mrc_openrouter",
+    "fiat": { "amount": "20.00", "currency": "USD" },
+    "tokenAmount": "20.000000",
+    "usageCount": 0,
+    "maxUsage": 1,
+    "preApprovalExpiryIso": "2099-01-01T00:00:00Z",
+    "rails": [
+      { "network": "base", "token": "USDC", "address": "0x1111111111111111111111111111111111111111" }
+    ]
+  }
+}

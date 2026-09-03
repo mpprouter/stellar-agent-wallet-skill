@@ -9,6 +9,64 @@ Published: https://clawhub.ai/shawnmuggle/stellar-agentic-wallet
 
 ---
 
+## Unreleased
+
+Adds `pay-link`: inspect a payment link from a known provider, run it through a
+policy layer, and only then consider paying it. **Read-only and dry-run in this
+release — it moves no funds.**
+
+- **`pay-link inspect <url>`** normalises Coinbase payment links / v3 payment
+  sessions, Stripe Crypto Payin sessions and Rozo Intent checkouts into one
+  shape: `provider, merchant{id,display_name,verified}, amount, currency,
+  rails[], expires_at, quote_expires_at, fulfillment_status, fees{5 lines},
+  risks[]`. Field names track the unified Payment Intent design spec so the two
+  stay compatible. A value we could not read is `null` — never `0`, never a
+  guess.
+- **No generic URL fetcher, by design.** Four whitelisted link shapes; anything
+  else is refused *without a request being made*. A blind fetcher would turn
+  every link put in front of the agent into a signing prompt.
+- **Policy layer with 20 named refusal codes**, all fail-closed: upstream state
+  (a `paid` link would double-pay), quote/link expiry, inspection staleness,
+  missing or malformed deposit address, compromised-wallet blacklist, amount /
+  currency / payee expectations, merchant allow-list, and per-call, rolling
+  daily and rolling monthly ceilings. All refusals are reported together.
+- **Non-USD pricing units are refused, not converted.** Every ceiling is
+  USD-denominated, so treating "0.1 BTC" as 0.1 would slip it under a $5 auto
+  ceiling. Only USD / USDC / USDT are accepted without a rate source.
+- **Address comparison is chain-aware.** EVM hex folds case; Stellar, Solana
+  and Tron do not, so two addresses differing only in case are two accounts.
+  A single `toLowerCase()` would have made `--expect-pay-to` accept the wrong
+  Solana account.
+- **Blacklist checked twice** — as a `high` risk at inspect time and as a hard
+  refusal before payment — so a caller who only runs `inspect` still sees it.
+  Public addresses only; messages mask to first-6 + last-4.
+- **`--confirm <digest>` handshake** above the `--max-auto` ceiling (default and
+  hard cap $5, same reasoning as `pay-per-call`), with `NOT_CONFIRMED`,
+  `CONFIRMATION_STALE` and `DEPOSIT_CHANGED` distinguished — a moved deposit
+  address never silently inherits an old confirmation. The digest binds the
+  rail's chain and token as well as its address, since an EVM address is often
+  the same string on several chains.
+- **Idempotent on `(provider:reference, digest)`** via a local mode-600
+  ledger holding public
+  facts only. The row is written as a `pending` reservation *before* anything
+  could move money and settled afterwards, so a crash mid-payment leaves a
+  reservation that refuses the retry (`reservation_open`) instead of paying
+  twice. Reservations consume the spend ceilings; dry runs do not.
+- **URLs are canonicalised before anything is hashed**, and idempotency is
+  keyed on `provider:reference` rather than the URL string. A fragment or a
+  tracking parameter never reaches the provider, so `…/pl_123#a` and
+  `…/pl_123#b` are one invoice — keying on the raw string would have let a
+  second run under a cosmetically different URL walk past the "already paid"
+  check.
+- **`--fixture` is refused on the pay path** unless `--dryrun` is also given:
+  otherwise benign local JSON could satisfy policy while the live link is what
+  gets paid.
+- Two fixture-driven smoke suites (`npm run test:pay-link`), no network and no
+  wallet. The policy suite asserts its own refusal-code coverage is complete,
+  so adding a refusal without a test fails the build.
+
+---
+
 ## v1.8.8 — 2026-08-21
 
 Fixes the async-job poll loop, which never authenticated and so hung on every

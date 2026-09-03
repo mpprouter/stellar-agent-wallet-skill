@@ -1,0 +1,14 @@
+{
+  "invoice": {
+    "merchant": "Example Labs",
+    "merchantId": "acct_example",
+    "merchantVerified": true,
+    "fiat": { "amount": "12.50", "currency": "USD" },
+    "state": "requires_payment",
+    "payable": true,
+    "validBeforeIso": "2099-01-01T00:00:00Z",
+    "depositAddresses": [
+      { "network": "base", "token": "USDC", "address": "0x2222222222222222222222222222222222222222" }
+    ]
+  }
+}

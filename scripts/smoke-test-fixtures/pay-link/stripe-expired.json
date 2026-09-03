@@ -1,0 +1,11 @@
+{
+  "invoice": {
+    "merchant": "Example Labs",
+    "merchantVerified": true,
+    "fiat": { "amount": "12.50", "currency": "USD" },
+    "state": "expired",
+    "payable": false,
+    "validBeforeIso": "2020-01-01T00:00:00Z",
+    "depositAddresses": []
+  }
+}
