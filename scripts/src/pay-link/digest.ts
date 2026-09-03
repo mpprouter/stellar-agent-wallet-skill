@@ -8,7 +8,8 @@
  * runs, the digest changes and the second run refuses rather than paying a
  * different invoice than the one that was shown.
  *
- * Digest inputs are deliberately narrow — the URL, the amount, the currency,
+ * Digest inputs are deliberately narrow — the invoice identity, the amount,
+ * the currency,
  * and the chain, token, address and memo of the chosen rail. A field that
  * cannot move money (a display title, an inspection timestamp) is excluded, so
  * cosmetic upstream churn does not force a pointless re-confirmation.
@@ -25,7 +26,8 @@ import { addressFamily } from "./address.js";
 
 /** The subset of an inspection that a confirmation is binding over. */
 export interface DigestInput {
-  url: string;
+  /** `provider:reference` — the invoice identity, NOT the raw URL. */
+  key: string;
   amount: string | null;
   currency: string | null;
   chain: string | null;
@@ -40,7 +42,7 @@ export function digestInputFrom(
 ): DigestInput {
   const rail = ins.rails[railIndex];
   return {
-    url: ins.url,
+    key: ins.canonical_key,
     amount: ins.amount,
     currency: ins.currency,
     chain: rail?.chain ?? null,
@@ -58,7 +60,7 @@ export function computeDigest(input: DigestInput): string {
   const foldedAddr =
     input.chain && addressFamily(input.chain) === "evm" ? addr.toLowerCase() : addr;
   const canonical = [
-    input.url,
+    input.key,
     input.amount ?? "",
     input.currency ?? "",
     (input.chain ?? "").trim().toLowerCase(),

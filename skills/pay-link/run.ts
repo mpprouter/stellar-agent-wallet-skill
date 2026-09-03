@@ -211,15 +211,15 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  // Idempotency: this exact (url, digest) already executed.
-  const prior = findEntry(ledgerFile, ins.url, digest);
+  // Idempotency: this exact (invoice, digest) already executed.
+  const prior = findEntry(ledgerFile, ins.canonical_key, digest);
   if (prior && prior.status === "pending") {
     // A reservation exists with no outcome recorded: either another process is
     // executing right now, or a previous run died between submitting and
     // recording. Both mean money may already have moved, so we refuse and ask
     // for reconciliation rather than paying a second time.
     const msg =
-      `A reservation for this exact payment (url + digest) was opened at ${prior.at} and never settled. ` +
+      `A reservation for this exact payment (invoice + digest) was opened at ${prior.at} and never settled. ` +
       `Another run may be in flight, or a previous run may have paid without recording it. ` +
       `Reconcile against the provider before retrying; if it definitely did not pay, remove that entry from ${args.ledger}.`;
     console.error(args.json ? JSON.stringify({ ok: false, code: "reservation_open", message: msg }, null, 2) : `REFUSED: ${msg}`);
@@ -269,7 +269,7 @@ async function main(): Promise<void> {
   // enabled. See skills/pay-link/SKILL.md.)
   const at = new Date().toISOString();
   const reserved = record(ledgerFile, {
-    url: ins.url,
+    invoice: ins.canonical_key,
     digest,
     amount: decision.amountUsd,
     currency: ins.currency,
@@ -295,7 +295,7 @@ async function main(): Promise<void> {
   };
   // Nothing was submitted, so the reservation settles straight to `dryrun`,
   // which does not consume the spend ceilings.
-  saveLedger(settle(reserved, ins.url, digest, { status: "dryrun" }), args.ledger);
+  saveLedger(settle(reserved, ins.canonical_key, digest, { status: "dryrun" }), args.ledger);
 
   console.log(JSON.stringify({
     ok: true,

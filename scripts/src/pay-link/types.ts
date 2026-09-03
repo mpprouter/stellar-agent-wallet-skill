@@ -71,6 +71,12 @@ export interface UnifiedInspection {
   url: string;
   /** Provider-native identifier (payment link id, session id, Rozo payment id). */
   reference: string;
+  /**
+   * `provider:reference` — the invoice's identity, independent of how its URL
+   * was written. Idempotency is keyed on this, never on the raw URL, so a
+   * differing fragment or tracking parameter cannot buy a second payment.
+   */
+  canonical_key: string;
 
   merchant: {
     /** Provider-native merchant id, when exposed. */

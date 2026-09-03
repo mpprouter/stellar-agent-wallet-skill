@@ -184,6 +184,7 @@ export function normaliseCoinbase(raw: any, url: string, reference: string): Uni
     provider: "coinbase",
     url,
     reference,
+    canonical_key: `coinbase:${reference}`,
     merchant: {
       id: str(d.merchantId),
       display_name: str(d.merchantName),
@@ -237,6 +238,7 @@ export function normaliseStripe(raw: any, url: string, reference: string): Unifi
     provider: "stripe-crypto",
     url,
     reference,
+    canonical_key: `stripe-crypto:${reference}`,
     merchant: {
       id: str(inv.merchantId),
       display_name: str(inv.merchant),
@@ -323,6 +325,9 @@ export function normaliseRozoIntent(raw: any, url: string, reference: string): U
     provider: "rozo-intent",
     url,
     reference: str(raw?.id) ?? reference,
+    // Keyed on the URL's id, not the body's: the body is attacker-adjacent
+    // data, and the id we asked for is what identifies this invoice.
+    canonical_key: `rozo-intent:${reference}`,
     merchant: {
       id: str(raw?.merchant?.id) ?? str(raw?.appId),
       display_name: merchantName,

@@ -46,11 +46,18 @@ release — it moves no funds.**
   address never silently inherits an old confirmation. The digest binds the
   rail's chain and token as well as its address, since an EVM address is often
   the same string on several chains.
-- **Idempotent on `(url, digest)`** via a local mode-600 ledger holding public
+- **Idempotent on `(provider:reference, digest)`** via a local mode-600
+  ledger holding public
   facts only. The row is written as a `pending` reservation *before* anything
   could move money and settled afterwards, so a crash mid-payment leaves a
   reservation that refuses the retry (`reservation_open`) instead of paying
   twice. Reservations consume the spend ceilings; dry runs do not.
+- **URLs are canonicalised before anything is hashed**, and idempotency is
+  keyed on `provider:reference` rather than the URL string. A fragment or a
+  tracking parameter never reaches the provider, so `…/pl_123#a` and
+  `…/pl_123#b` are one invoice — keying on the raw string would have let a
+  second run under a cosmetically different URL walk past the "already paid"
+  check.
 - **`--fixture` is refused on the pay path** unless `--dryrun` is also given:
   otherwise benign local JSON could satisfy policy while the live link is what
   gets paid.

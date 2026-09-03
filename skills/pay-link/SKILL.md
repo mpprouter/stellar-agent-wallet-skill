@@ -58,6 +58,7 @@ unified Payment Intent design spec (ainative
   "provider": "rozo-intent",              // coinbase | stripe-crypto | rozo-intent
   "url": "https://invoice.rozo.ai/checkout?id=pay_abc123",
   "reference": "pay_abc123",              // provider-native id
+  "canonical_key": "rozo-intent:pay_abc123",  // invoice identity; idempotency keys on this
   "merchant": { "id": "mrc_mugglelink", "display_name": "MuggleLink", "verified": true },
   "amount": "5.00",                       // decimal string, or null
   "currency": "USD",                      // PRICING unit, not a chain asset
@@ -104,7 +105,7 @@ not get nudged through one fix at a time.
 |---|---|
 | `unsupported_link` | URL is not one of the four whitelisted shapes, is not https, uses a non-default port, or carries embedded credentials |
 | `fixture_not_allowed` | `--fixture` was used on the `pay` path without `--dryrun` |
-| `reservation_open` | a previous run opened a reservation for this exact `(url, digest)` and never settled it — reconcile before retrying |
+| `reservation_open` | a previous run opened a reservation for this exact `(invoice, digest)` and never settled it — reconcile before retrying |
 | `not_payable` | upstream says paid / used / expired / cancelled / unknown — a `paid` link would double-pay |
 | `expired` | `quote_expires_at` (else `expires_at`) is in the past |
 | `stale_inspection` | inspection older than 300s, or has no usable timestamp |
@@ -139,8 +140,8 @@ mask addresses to first-6 + last-4.
 ## Confirmation digest
 
 Above the auto ceiling, `pay` prints a 16-hex digest over exactly the facts that
-decide where money goes — url, amount, currency, and the chosen rail's chain,
-token, deposit address and memo — and refuses until it is echoed back with
+decide where money goes — the invoice identity, amount, currency, and the
+chosen rail's chain, token, deposit address and memo — and refuses until it is echoed back with
 `--confirm`. Chain and token are in the digest because an EVM deposit address
 is often the same string on several chains: binding only the address would let
 a confirmed Base/USDC payment be re-pointed at Ethereum/USDT unnoticed. Cosmetic upstream churn does
@@ -160,7 +161,8 @@ Every execution emits a machine-readable receipt:
   "currency": "USD", "status": "dryrun", "digest": "2f80…", "at": "…" }
 ```
 
-Retries are idempotent on `(url, digest)`, recorded in a local ledger
+Retries are idempotent on `(provider:reference, digest)` — the invoice's
+identity, not the URL string — recorded in a local ledger
 (`.pay-link-ledger.json`, mode 600, public facts only).
 
 The ledger is written **before** anything could move money, not after: a

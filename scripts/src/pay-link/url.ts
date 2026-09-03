@@ -64,10 +64,25 @@ export class UnsupportedLinkError extends Error {
 
 export interface ResolvedLink {
   provider: Provider;
-  /** Normalised URL string handed to the provider inspector. */
+  /**
+   * **Canonical** URL: scheme + host + path, plus only the query parameters
+   * that identify the invoice. The fragment and every other query parameter
+   * are dropped.
+   *
+   * This matters beyond tidiness. The fragment is never sent to the server, so
+   * `.../pl_123#a` and `.../pl_123#b` are the same invoice — but if the raw
+   * string reached the confirmation digest and the idempotency key, they would
+   * hash differently, and a second run under a different fragment (or a
+   * tracking parameter) would sail past the "already paid" check.
+   */
   url: string;
   /** Provider-native id pulled out of the URL. */
   reference: string;
+  /**
+   * `provider:reference` — the identity of the *invoice*, independent of how
+   * its URL was written. This, not the URL, is what idempotency is keyed on.
+   */
+  canonicalKey: string;
 }
 
 /** The accepted shapes, for help text and refusal messages. */
@@ -114,6 +129,8 @@ export function resolveLink(raw: string): ResolvedLink {
     if (!p.hosts.includes(host)) continue;
     if (!p.path.test(u.pathname)) continue;
 
+    const path = u.pathname.replace(/\/$/, "");
+
     if (p.provider === "rozo-intent") {
       const id = u.searchParams.get("id");
       if (!id || !/^[A-Za-z0-9_-]{6,}$/.test(id)) {
@@ -121,11 +138,24 @@ export function resolveLink(raw: string): ResolvedLink {
           "Rozo checkout link is missing a usable ?id= parameter",
         );
       }
-      return { provider: p.provider, url: u.toString(), reference: id };
+      // Only `id` survives: it is the whole of the invoice's identity here.
+      return {
+        provider: p.provider,
+        url: `https://${host}${path}?id=${encodeURIComponent(id)}`,
+        reference: id,
+        canonicalKey: `${p.provider}:${id}`,
+      };
     }
 
-    const seg = u.pathname.replace(/\/$/, "").split("/").pop() ?? "";
-    return { provider: p.provider, url: u.toString(), reference: seg };
+    // Coinbase and Stripe carry the id in the path; nothing in the query
+    // identifies the invoice, so the query goes entirely.
+    const seg = path.split("/").pop() ?? "";
+    return {
+      provider: p.provider,
+      url: `https://${host}${path}`,
+      reference: seg,
+      canonicalKey: `${p.provider}:${seg}`,
+    };
   }
 
   throw new UnsupportedLinkError(

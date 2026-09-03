@@ -44,9 +44,22 @@ refuses("not-a-url", "non-URL refused");
 refuses("https://payments.coinbase.com.evil.tld/payment-links/pl_abc", "lookalike suffix host refused");
 refuses("https://payments.coinbase.com:444/payment-links/pl_abc", "non-default port on a whitelisted host refused");
 
+console.log("URL canonicalisation — cosmetic variants are the same invoice");
+const c1 = resolveLink("https://payments.coinbase.com/payment-links/pl_abc123");
+const c2 = resolveLink("https://payments.coinbase.com/payment-links/pl_abc123#tracking");
+const c3 = resolveLink("https://payments.coinbase.com/payment-links/pl_abc123?utm_source=x");
+const c4 = resolveLink("https://payments.coinbase.com/payment-links/pl_abc123/");
+assert(new Set([c1.url, c2.url, c3.url, c4.url]).size === 1, "fragment, tracking query and trailing slash all canonicalise to one URL");
+assert(new Set([c1.canonicalKey, c2.canonicalKey, c3.canonicalKey, c4.canonicalKey]).size === 1, "…and to one idempotency key, so a variant URL cannot buy a second payment");
+const r1 = resolveLink("https://invoice.rozo.ai/checkout?id=pay_abc123");
+const r2 = resolveLink("https://invoice.rozo.ai/checkout?utm=abc&id=pay_abc123#f");
+assert(r1.url === r2.url && r1.canonicalKey === r2.canonicalKey, "rozo keeps only ?id=, drops fragment and extra params");
+assert(r1.canonicalKey === "rozo-intent:pay_abc123", "canonical key is provider:reference, not a URL string");
+assert(resolveLink("https://payments.coinbase.com/payment-links/pl_OTHER").canonicalKey !== c1.canonicalKey, "different invoices keep different keys");
+
 console.log("Unified shape — every provider produces the same keys");
 const KEYS = [
-  "provider", "url", "reference", "merchant", "amount", "currency", "rails",
+  "provider", "url", "reference", "canonical_key", "merchant", "amount", "currency", "rails",
   "expires_at", "quote_expires_at", "fulfillment_status", "fees", "risks",
   "inspected_at", "raw",
 ];
