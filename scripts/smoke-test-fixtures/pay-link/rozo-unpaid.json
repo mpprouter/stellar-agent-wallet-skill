@@ -1,0 +1,26 @@
+{
+  "id": "pay_abc123",
+  "appId": "rozoAgent",
+  "orderId": "ml_topup_9931",
+  "status": "payment_unpaid",
+  "type": "exactOut",
+  "createdAt": "2026-09-03T08:00:00Z",
+  "updatedAt": "2026-09-03T08:00:00Z",
+  "expiresAt": "2099-01-01T00:00:00Z",
+  "display": { "title": "MuggleLink top-up", "currency": "USD" },
+  "merchant": { "id": "mrc_mugglelink", "displayName": "MuggleLink", "verified": true },
+  "source": {
+    "chainId": "1500",
+    "tokenSymbol": "USDC",
+    "amount": "5.01",
+    "receiverAddress": "GDK3AVW3YE6UL3J4WLNKBMP65KSY32YPUKIOC6PXW65XJ3LEG3YIDXXB",
+    "receiverMemo": "9931",
+    "fee": "0.01"
+  },
+  "destination": {
+    "chainId": "8453",
+    "receiverAddress": "0x3333333333333333333333333333333333333333",
+    "tokenSymbol": "USDC",
+    "amount": "5.00"
+  }
+}

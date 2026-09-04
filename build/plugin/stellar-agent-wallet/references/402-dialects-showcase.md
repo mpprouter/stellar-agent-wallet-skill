@@ -394,7 +394,7 @@ Reproducing the paid half — the exact invocation used, with expectations
 pinned so a rewritten challenge is refused before signing:
 
 ```bash
-npx tsx skills/pay-per-call/run.ts \
+./node_modules/.bin/tsx skills/pay-per-call/run.ts \
   https://apiserver.mpprouter.dev/v1/services/firecrawl/scrape \
   --method POST --body '{"url":"https://example.com"}' \
   --expect-pay-to GDK3AVW3YE6UL3J4WLNKBMP65KSY32YPUKIOC6PXW65XJ3LEG3YIDXXB \

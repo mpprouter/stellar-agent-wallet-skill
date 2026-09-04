@@ -1,0 +1,14 @@
+{
+  "protocolVersion": "v3",
+  "derived": {
+    "status": "PAYMENT_SESSION_STATUS_CREATED",
+    "payable": false,
+    "used": true,
+    "expired": false,
+    "merchantName": "OpenRouter",
+    "fiat": { "amount": "20.00", "currency": "USD" },
+    "usageCount": 1,
+    "maxUsage": 1,
+    "preApprovalExpiryIso": "2099-01-01T00:00:00Z"
+  }
+}

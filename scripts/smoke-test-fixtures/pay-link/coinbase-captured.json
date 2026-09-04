@@ -1,0 +1,10 @@
+{
+  "protocolVersion": "v3",
+  "derived": {
+    "status": "PAYMENT_SESSION_STATUS_CAPTURE_SUCCEEDED",
+    "payable": false,
+    "merchantName": "OpenRouter",
+    "fiat": { "amount": "20.00", "currency": "USD" },
+    "preApprovalExpiryIso": "2099-01-01T00:00:00Z"
+  }
+}

@@ -9,6 +9,326 @@ Published: https://clawhub.ai/shawnmuggle/stellar-agentic-wallet
 
 ---
 
+## Unreleased
+
+Adds `pay-link`: inspect a payment link from a known provider, run it through a
+policy layer, and only then consider paying it. **Read-only and dry-run in this
+release — it moves no funds.**
+
+- **`pay-link inspect <url>`** normalises Coinbase payment links / v3 payment
+  sessions, Stripe Crypto Payin sessions and Rozo Intent checkouts into one
+  shape: `provider, merchant{id,display_name,verified}, amount, currency,
+  rails[], expires_at, quote_expires_at, fulfillment_status, fees{5 lines},
+  risks[]`. Field names track the unified Payment Intent design spec so the two
+  stay compatible. A value we could not read is `null` — never `0`, never a
+  guess.
+- **No generic URL fetcher, by design.** Four whitelisted link shapes; anything
+  else is refused *without a request being made*. A blind fetcher would turn
+  every link put in front of the agent into a signing prompt.
+- **Policy layer with 20 named refusal codes**, all fail-closed: upstream state
+  (a `paid` link would double-pay), quote/link expiry, inspection staleness,
+  missing or malformed deposit address, compromised-wallet blacklist, amount /
+  currency / payee expectations, merchant allow-list, and per-call, rolling
+  daily and rolling monthly ceilings. All refusals are reported together.
+- **Non-USD pricing units are refused, not converted.** Every ceiling is
+  USD-denominated, so treating "0.1 BTC" as 0.1 would slip it under a $5 auto
+  ceiling. Only USD / USDC / USDT are accepted without a rate source.
+- **Address comparison is chain-aware.** EVM hex folds case; Stellar, Solana
+  and Tron do not, so two addresses differing only in case are two accounts.
+  A single `toLowerCase()` would have made `--expect-pay-to` accept the wrong
+  Solana account.
+- **Blacklist checked twice** — as a `high` risk at inspect time and as a hard
+  refusal before payment — so a caller who only runs `inspect` still sees it.
+  Public addresses only; messages mask to first-6 + last-4.
+- **`--confirm <digest>` handshake** above the `--max-auto` ceiling (default and
+  hard cap $5, same reasoning as `pay-per-call`), with `NOT_CONFIRMED`,
+  `CONFIRMATION_STALE` and `DEPOSIT_CHANGED` distinguished — a moved deposit
+  address never silently inherits an old confirmation. The digest binds the
+  rail's chain and token as well as its address, since an EVM address is often
+  the same string on several chains.
+- **Idempotent on `(provider:reference, digest)`** via a local mode-600
+  ledger holding public
+  facts only. The row is written as a `pending` reservation *before* anything
+  could move money and settled afterwards, so a crash mid-payment leaves a
+  reservation that refuses the retry (`reservation_open`) instead of paying
+  twice. Reservations consume the spend ceilings; dry runs do not.
+- **URLs are canonicalised before anything is hashed**, and idempotency is
+  keyed on `provider:reference` rather than the URL string. A fragment or a
+  tracking parameter never reaches the provider, so `…/pl_123#a` and
+  `…/pl_123#b` are one invoice — keying on the raw string would have let a
+  second run under a cosmetically different URL walk past the "already paid"
+  check.
+- **`--fixture` is refused on the pay path** unless `--dryrun` is also given:
+  otherwise benign local JSON could satisfy policy while the live link is what
+  gets paid.
+- Two fixture-driven smoke suites (`npm run test:pay-link`), no network and no
+  wallet. The policy suite asserts its own refusal-code coverage is complete,
+  so adding a refusal without a test fails the build.
+
+---
+
+## v1.8.8 — 2026-08-21
+
+Fixes the async-job poll loop, which never authenticated and so hung on every
+paid call that returned a job. **Security: the poll's ownership proof is now
+domain-separated — this release must be paired with the matching router
+change, already live.**
+
+- **Async polls now prove ownership.** The loop reused the payment headers from
+  the original request; the router requires an Ed25519 signature over a nonce
+  from `GET /jobs/<id>/challenge`. Every poll returned 401, and 401 fell through
+  to a generic retry, so the CLI spun for the full 10-minute timeout and never
+  surfaced the refund id — even when the payment had already been refunded
+  on-chain minutes earlier.
+- **The signed payload is domain-separated.** The proof signs the UTF-8 bytes of
+  `mpprouter-job-ownership-v1:<jobId>:<nonce>`, never the bare 32-byte nonce.
+  Every Stellar signing payload — transactions, Soroban auth entries — is a bare
+  32-byte hash, so signing a service-chosen 32-byte value would let a malicious
+  service harvest a valid transaction signature from the payer's wallet. The CLI
+  additionally refuses outright to sign any 32-byte payload.
+- **401/403 are now terminal after 3 strikes** instead of retrying forever, and
+  point you at `scripts/verify-refund.mjs`. Transient network and JSON errors
+  stay retryable — the payment has already settled by that point.
+- **Poll interval 5s → 15s**, and a line is printed only when the status
+  actually changes, instead of one line per attempt.
+
+## v1.8.7 — 2026-08-19
+
+Ships refund verification as a runnable script instead of a copy-paste snippet,
+and corrects the documented refund latency. No change to signing or payment
+behaviour.
+
+- New `scripts/verify-refund.mjs`: polls a refund receipt until it is signed
+  (`--wait`, 180s default timeout) and verifies the Ed25519 signature against
+  the signers published at `/health`. Read-only; exit 0 = VALID.
+- Refund latency guidance corrected from "~25s" to **within 1–2 minutes**: the
+  router's refund signer runs on a once-per-minute cron, so the old figure was
+  a lucky sample (measured range 22s–68s, rare slower outliers).
+
+## v1.8.6 — 2026-08-18
+
+Makes an automatic refund visible to the payer, and documents how to verify the
+receipt without trusting us. No change to signing or payment behaviour.
+
+- **`pay-per-call` now prints `Refund-Id` when a paid call fails.** The MPP
+  Router refunds a payment the upstream did not fulfil, and reports it *only*
+  in response headers (`Refund-Id`, `Refund-Status`, `Refund-Status-Url`) —
+  the body is the upstream error. This client printed only the body, so the
+  payer never learned the refund id and had no way to fetch the signed receipt
+  at `GET /v1/refunds/{id}`. The refund is now reported on stderr on both the
+  direct response and async job polls, and `--json` adds a machine-readable
+  `REFUND_JSON` line.
+- **A poll response carrying refund headers is treated as terminal.** An async
+  job that failed after payment previously kept polling until the 10-minute
+  timeout instead of stopping at the refund.
+- **The receipt URL is validated and printed bare.** It arrives in a header
+  from whatever endpoint was called, so it is accepted only as an `http(s)`
+  URL and never printed inside a copyable shell command — a value carrying
+  shell metacharacters cannot become a command the payer pastes.
+- **New: `references/verifying-refunds.md`.** Payer-side walkthrough from "my
+  call failed" to `VALID`: read the id, poll until the receipt is signed
+  (~25s), take the signer from `/health`, verify the Ed25519 signature over
+  the `rozo-receipt-json-v1` canonicalisation, and check both transactions on
+  Stellar. Includes a one-line tamper that flips the result to `INVALID`.
+
+---
+
+## v1.8.5 — 2026-08-11
+
+Documentation corrections from the ClawHub security review (clawscan
+"Review" findings on 1.8.4). No code changes.
+
+- **Endpoint disclosure was inaccurate (LP3).** The metadata implied only the
+  listed endpoints are contacted, but pay-per-call by design fetches whatever
+  402 URL the user supplies plus its poll URL. The list now says so.
+- **The session-service rule contradicted itself (SDI-4).** One line said
+  refuse, another said never override the user. Now one rule: refuse by
+  default with the loss-of-fee warning; the single exception is the user
+  explicitly proceeding after that exact warning.
+- **"charge → proceed silently" overstated (SQP-2, surfaced via the discover
+  listing).** Verified describes the service record, not permission to spend
+  without the user seeing it; pay-per-call's mainnet confirmation gate applies.
+- **`--yes` examples no longer model mainnet use (SQP-1).** Both examples now
+  pin `--network testnet` and say why the mainnet prompt should run.
+
+---
+
+## v1.8.4 — 2026-08-11
+
+Finds wallets left behind by earlier versions. Read-only: nothing is moved,
+rewritten or deleted.
+
+- **A `.stellar-secret` in an older install is now found.** 1.8.3 added a
+  version-proof location but did nothing for wallets already sitting in a
+  previous install (`.../stellar-agent-wallet/1.8.1/`), which upgrading users
+  would have seen as "secret file not found" — a wallet that looks lost while
+  its funds are still on-chain. Resolution now walks: the working directory,
+  `~/.stellar-agent-wallet/.stellar-secret`, then sibling installs newest
+  first. When one of those older wallets is used, the path is printed along
+  with a suggestion to copy it somewhere version-proof — a suggestion, not an
+  action: the file stays exactly where the user left it.
+
+  Only `.stellar-secret` files this skill wrote, in this skill's own install
+  directories, are ever considered. A generic `~/.env` or any other file
+  belonging to the user is still never read.
+
+- Absence still moves to the next candidate only on `ENOENT`; an unreadable
+  file surfaces as itself rather than silently selecting a different wallet.
+
+---
+
+## v1.8.3 — 2026-08-11
+
+Credential handling: only read what you were pointed at.
+
+- **`.env.prod` / `.env` are no longer read from an unnamed directory.** The
+  secret loader fell back to them in the secret file's directory, which by
+  default is just the working directory. Those are the user's files and
+  routinely hold credentials for unrelated things — API keys, database URLs —
+  so reading them because the tool happened to be run there is not something
+  the user ever agreed to. They are now consulted only when a path was named
+  with `--secret-file`; naming a location is what authorises reading it.
+
+- **New: `~/.stellar-agent-wallet/.stellar-secret`, checked when no path was
+  given.** The default `.stellar-secret` is relative, so it lands in the
+  working directory — which, following the documented commands, is the
+  versioned plugin install (`.../stellar-agent-wallet/1.8.2/`). The next
+  version installs to a sibling directory, so a wallet generated under the
+  default became invisible after an upgrade, with the key stranded in the old
+  version's folder. This location does not move with the version. A Stellar
+  CLI identity (`--identity`) was never affected.
+
+Nothing changes for `--identity` or an explicit `--secret-file`.
+
+---
+
+## v1.8.2 — 2026-08-11
+
+Finishes the launcher fix 1.8.1 started. Docs only plus one package.json line;
+no runtime, signing, or payment behaviour changes.
+
+- **Documented commands now use `./node_modules/.bin/tsx`, not `npx tsx`**
+  (23 files). 1.8.1 kept `npx tsx` everywhere and merely documented the local
+  binary as a fallback, which left every copied command able to fail first.
+  A clean 1.8.1 run still hit it and recovered only because the fallback was
+  written down.
+
+- **Removed the `"tsx": "tsx"` script added in 1.8.1.** It could never have
+  worked, for two independent reasons. The published plugin artifact's
+  `package.json` is generated by `plugin/build-plugin.mjs` and carries no
+  `scripts` block at all, so the entry never reached an installed plugin. And
+  `npm run` does not forward bare flags to the script — `npm run tsx --version`
+  prints npm's version, not tsx's — so the `npm run tsx` path would still have
+  mangled `--to`, `--amount` and the rest exactly as reported.
+
+  The root trigger (why `npx tsx` becomes `npm run tsx` on some machines) is
+  environment-specific and not reproducible here. Not depending on `npx` at
+  all removes the failure mode rather than working around it.
+
+---
+
+## v1.8.1 — 2026-08-10
+
+A launcher fix. No runtime, signing, or payment behaviour changes.
+
+- **`npx tsx` could fail with `Missing script: "tsx"`** (#22). Every command in
+  the README and the SKILL.md files is documented as
+  `npx tsx skills/<name>/run.ts …`. On some npm versions `npx tsx` resolves to
+  `npm run tsx` rather than the local tsx binary; the run then dies with
+  `npm error Missing script: "tsx"`, and npm reinterprets the script's own
+  flags along the way (`--to` is reported as `--token-description`). The error
+  points nowhere near the real cause, so it reads like the skill is broken.
+  A `"tsx": "tsx"` script now makes that fallback path resolve, and both the
+  README and the `send-raw` section of SKILL.md document
+  `./node_modules/.bin/tsx …` as the direct launcher. Hit for real while
+  funding a `rozo-checkout` Stellar deposit.
+
+  For agents: this failure happens **before** anything is signed or submitted.
+  It is never a failed payment and must not trigger a retry of the send.
+
+- **Republished the plugin artifact** (#23). `build/plugin/` — the directory
+  users install via `/plugin marketplace add` — had drifted from source since
+  1.8.0, so the fix above and the v1.8.0 discover-wording change were not
+  actually reaching installs until it was rebuilt.
+
+---
+
+## v1.8.0 — 2026-08-10
+
+Cuts everything that had accumulated since 1.7.0: the `send-raw` sub-skill, the
+2026-07-31 hardening round, and a security dependency bump.
+
+- **Security — `@stellar/stellar-sdk` 15.1.0 → 16.2.0** (#19). Clears two
+  high-severity advisories reaching us through the SDK's `axios` dependency
+  (authentication bypass via prototype pollution in the `validateStatus` merge
+  strategy). The SDK is a runtime dependency, so the vulnerable code shipped to
+  everyone who installed the skill or the plugin. `npm audit` now reports zero
+  vulnerabilities.
+
+  The version was declared in three places — `package.json` plus two plugin
+  templates rendered into the published artifact. Bumping only the first would
+  have left plugin users on the vulnerable SDK. All three now agree.
+
+  Known gap: `test:sign` is not a reliable gate. It hits testnet and fails
+  intermittently (~3 runs in 5) with Contract #6/#14 for the sender. Measured
+  on unmodified 15.1.0 it failed at the same rate, so this is pre-existing and
+  not a signing regression — but it does mean the release is not backed by a
+  green end-to-end run. Fixing that gate is tracked separately.
+
+## Unreleased — `send-raw` sub-skill
+
+- **New — `send-raw`: pay a deposit address exactly as specified.** Every
+  existing spending command *originates* a payment: `send-payment` and
+  `bridge` POST a new Rozo intent and fund whatever deposit address Rozo
+  hands back. There was no way to pay an address and memo that some **other**
+  system had already issued — a Rozo checkout order, an exchange deposit
+  slip, an invoice. `send-raw --to <G...> --amount <n> --asset USDC --memo
+  <m>` builds, signs and submits that single Classic payment and nothing
+  else.
+
+  Without it, callers had to hand-roll `stellar tx new payment --build-only`
+  → `tx decode` → patch the memo into the JSON by hand → `tx encode` → sign →
+  send, because the Stellar CLI's `tx new payment` has no `--memo` flag. A
+  dropped memo means the funds land and are never credited, so that pipeline
+  was the worst possible place to improvise.
+
+  Preflight refuses, before anything is signed, a destination that does not
+  exist, does not trust the asset, is unauthorized by the issuer, or lacks
+  trustline headroom; an amount over 7 decimals or beyond the spendable
+  balance; a memo that breaks its type's limits; a `C...` contract address;
+  and a self-payment. Amounts pass through verbatim so an exact-match
+  deposit of `1.0500` is not silently reformatted. Mainnet always prompts.
+
+  Affordability math runs in stroops (`bigint`), net of `selling_liabilities`
+  so XLM committed to open DEX offers is not counted as spendable, and with
+  the network fee charged against XLM above the minimum reserve. Float math
+  at the boundary would either refuse an affordable payment or submit an
+  unaffordable one — and a transaction that fails on-chain still burns its
+  fee.
+
+  Two hardening guards on inputs that come from outside: `--asset` must be
+  exactly one `CODE:ISSUER` pair (a three-part spec would otherwise silently
+  use the first issuer and pay the wrong token), and MEMO_TEXT may not
+  contain control characters (ANSI escapes in a memo could rewrite the
+  confirmation display after the destination had been printed, defeating the
+  human verification step).
+
+- **Docs — corrected the deposit-funding routing rule.** The router's
+  "funding rozo-intents payments" step told agents to use `send-payment` for
+  an already-issued deposit address. That is wrong: `send-payment`'s `--to`
+  is the recipient of a **new** intent, so following it opened a second
+  intent, paid a different address, burned an extra fee and left the
+  original order unfunded. It now points at `send-raw`.
+
+- **Tests — `npm run test:send-raw`.** Runs the full build → sign → submit
+  path on testnet against Friendbot-funded accounts, then re-reads the
+  transaction from Horizon and asserts the memo, amount, destination and
+  asset that actually landed on-chain. Also covers the validation guards,
+  including a multi-byte memo that is under 28 characters but over the
+  28-**byte** MEMO_TEXT limit.
+
+---
+
 ## Unreleased — 2026-07-31 hardening round
 
 Security, correctness and transparency work driven by real mainnet usage

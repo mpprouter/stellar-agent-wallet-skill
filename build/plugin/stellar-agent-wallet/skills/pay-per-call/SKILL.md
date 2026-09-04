@@ -95,20 +95,20 @@ Full decoded walkthrough of a real dual-dialect 402:
 
 ```bash
 # MPP Router service (discovered via discover skill)
-npx tsx skills/pay-per-call/run.ts \
+./node_modules/.bin/tsx skills/pay-per-call/run.ts \
   "https://apiserver.mpprouter.dev/v1/services/parallel/search" \
   --body '{"query": "Summarize https://stripe.com/docs"}' \
   --method POST \
   --identity mpp-mainnet-payer
 
 # x402 facilitator
-npx tsx skills/pay-per-call/run.ts https://some-x402-api.example/endpoint
+./node_modules/.bin/tsx skills/pay-per-call/run.ts https://some-x402-api.example/endpoint
 
 # Include JSON output mode
-npx tsx skills/pay-per-call/run.ts <url> --body '{...}' --json
+./node_modules/.bin/tsx skills/pay-per-call/run.ts <url> --body '{...}' --json
 
 # Save payment receipt to file
-npx tsx skills/pay-per-call/run.ts <url> --receipt-out receipt.json
+./node_modules/.bin/tsx skills/pay-per-call/run.ts <url> --receipt-out receipt.json
 ```
 
 ## Async jobs (202 responses)
@@ -130,6 +130,30 @@ result. When this happens:
 
 If there is no `X-Job-Poll-Url` header, the 202 body is printed as-is.
 
+## When a paid call fails: automatic refunds
+
+If the payment settles but the upstream service does not deliver, the MPP
+Router refunds you automatically and reports it **in response headers**
+(`Refund-Id`, `Refund-Status`, `Refund-Status-Url`) — never in the body.
+This script prints them on stderr the moment it sees them, on the direct
+response and on async job polls alike:
+
+```
+💸 Payment refunded automatically (the call was paid but not fulfilled)
+   Refund-Id:     6e8eb745-d90e-45fc-a258-4846e9552f16
+   Refund-Status: pending
+   Receipt:       https://apiserver.mpprouter.dev/v1/refunds/6e8eb745-...
+   Fetch it with: curl -s '<the URL above>'
+```
+
+With `--json`, a machine-readable `REFUND_JSON {...}` line is emitted too.
+
+Fetch that URL until `outcome` leaves `refund_pending` — the router's refund
+signer runs on a once-per-minute cron, so expect the signed receipt **within
+1–2 minutes**. `node scripts/verify-refund.mjs <refund_id> --wait` polls and
+verifies in one step. Step-by-step walkthrough:
+`references/verifying-refunds.md`.
+
 ## Safety
 
 - ✅ **Credentials are single-use** — if the first retry fails, the credential is burned. Don't blindly re-retry; start fresh.
@@ -147,13 +171,13 @@ If there is no `X-Job-Poll-Url` header, the 202 body is printed as-is.
 ```bash
 # Discover — capture the service + its catalog-asserted payment
 # expectations so pay-per-call can refuse a hostile 402.
-SERVICE=$(npx tsx skills/discover/run.ts --query "web search" --pick-one --json)
+SERVICE=$(./node_modules/.bin/tsx skills/discover/run.ts --query "web search" --pick-one --json)
 URL="https://apiserver.mpprouter.dev$(echo "$SERVICE" | jq -r '.public_path')"
 EXPECT_AMT=$(echo "$SERVICE" | jq -r '.expect.amount_usdc // empty')
 EXPECT_TO=$(echo "$SERVICE" | jq -r '.expect.pay_to // empty')
 
 # Call
-npx tsx skills/pay-per-call/run.ts "$URL" \
+./node_modules/.bin/tsx skills/pay-per-call/run.ts "$URL" \
   --body '{"query": "Summarize https://stripe.com/docs"}' \
   --method POST \
   ${EXPECT_AMT:+--expect-amount "$EXPECT_AMT"} \

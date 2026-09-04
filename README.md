@@ -31,18 +31,26 @@ individual `skills/*/SKILL.md` for each command's flags. The entry points:
 
 | Task | Command |
 | --- | --- |
-| Create / import a wallet | `npx tsx skills/onboard/run.ts` |
-| Check balance, reserves, trustline | `npx tsx skills/check-balance/run.ts` |
-| Find a paid API | `npx tsx skills/discover/run.ts --query "<text>" --pick-one --json` |
-| Call a 402-gated API and pay | `npx tsx skills/pay-per-call/run.ts <url> …` |
-| Send USDC | `npx tsx skills/send-payment/run.ts …` |
-| Bridge USDC cross-chain | `npx tsx skills/bridge/run.ts …` |
+| Create / import a wallet | `./node_modules/.bin/tsx skills/onboard/run.ts` |
+| Check balance, reserves, trustline | `./node_modules/.bin/tsx skills/check-balance/run.ts` |
+| Find a paid API | `./node_modules/.bin/tsx skills/discover/run.ts --query "<text>" --pick-one --json` |
+| Call a 402-gated API and pay | `./node_modules/.bin/tsx skills/pay-per-call/run.ts <url> …` |
+| Send USDC | `./node_modules/.bin/tsx skills/send-payment/run.ts …` |
+| Bridge USDC cross-chain | `./node_modules/.bin/tsx skills/bridge/run.ts …` |
+| Inspect / pay a payment link | `./node_modules/.bin/tsx skills/pay-link/run.ts inspect <url> --json` |
+
+> The local binary is used deliberately rather than `npx tsx`. On some setups
+> `npx tsx` resolves to `npm run tsx`, which fails with
+> `npm error Missing script: "tsx"` and — worse — reinterprets the script's own
+> flags on the way (`--to` gets reported as `--token-description`). The error
+> then points nowhere near the real cause. `./node_modules/.bin/tsx` runs the
+> same tsx with no launcher in between.
 
 A representative paid call, with the safety flags you should always pass
 when the catalog told you what to expect:
 
 ```bash
-npx tsx skills/pay-per-call/run.ts \
+./node_modules/.bin/tsx skills/pay-per-call/run.ts \
   https://apiserver.mpprouter.dev/v1/services/firecrawl/scrape \
   --method POST --body '{"url":"https://example.com"}' \
   --expect-pay-to <G...> --expect-amount 0.002 \
@@ -73,6 +81,11 @@ Conventions worth knowing before you wire this into an autonomous loop:
 Want to understand the 402 protocol itself rather than the CLI? See
 `references/402-dialects-showcase.md` — a real dual-dialect 402 decoded
 field by field.
+
+Paid for a call that failed? The router refunds automatically and
+`pay-per-call` now prints the `Refund-Id` and receipt URL it returns.
+`references/verifying-refunds.md` walks a payer through fetching that
+receipt and verifying its Ed25519 signature without trusting us.
 
 ## Security
 
