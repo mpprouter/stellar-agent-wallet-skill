@@ -26,6 +26,12 @@ export interface ParsedChallenge {
   payTo: string;
   maxTimeoutSeconds: number;
   raw: unknown;
+  /**
+   * The exact `accepts[]` entry this challenge was narrowed from, for
+   * x402 v2 echo-back. Absent for the MPP dialect, which carries a
+   * single requirement rather than a list.
+   */
+  accepted?: unknown;
 }
 
 /**
@@ -68,6 +74,14 @@ export async function parse402(
     try {
       const mppChallenge = mppx.Challenge.deserialize(wwwAuth);
       const req = mppChallenge.request as MppChargeRequest;
+      // A multi-chain seller can advertise the MPP dialect for a rail we
+      // cannot sign (agent402.tools emits `method="evm"` first). Signing
+      // is Stellar-only, so a non-Stellar recipient is not a challenge we
+      // can answer — fall through to the x402 branch, which carries the
+      // full `accepts[]` list and may still hold a Stellar rail. Without
+      // this the wallet took the EVM leg and handed a 0x address to the
+      // SAC signer.
+      if (!isStellarAddress(req.recipient)) throw new Error("non-stellar mpp challenge");
       return {
         dialect: "mpp",
         amount: req.amount,
@@ -130,8 +144,20 @@ function decodeX402Envelope(header: string): any | null {
  * unsponsored fees — see the note in `parse402`.
  */
 function toX402Challenge(body: any): ParsedChallenge | null {
-  const r = body?.accepts?.[0];
-  if (r?.scheme !== "exact") return null;
+  const accepts: any[] = Array.isArray(body?.accepts) ? body.accepts : [];
+  // Sellers list every rail they take, in their own order — agent402.tools
+  // puts Base first and Stellar tenth. We can only sign Stellar, so select
+  // by network rather than by position. `accepts[0]` silently produced an
+  // EVM requirement whose 0x `asset`/`payTo` were then fed to the SAC
+  // signer.
+  const r = accepts.find(
+    (a) =>
+      a?.scheme === "exact" &&
+      typeof a?.network === "string" &&
+      a.network.startsWith("stellar:") &&
+      isStellarAddress(a?.payTo),
+  );
+  if (!r) return null;
   assertSponsored(r);
   return {
     dialect: "x402",
@@ -140,7 +166,13 @@ function toX402Challenge(body: any): ParsedChallenge | null {
     payTo: r.payTo,
     maxTimeoutSeconds: r.maxTimeoutSeconds ?? 60,
     raw: body,
+    accepted: r,
   };
+}
+
+/** A Stellar account (G...) address — the only payTo the SAC signer can pay. */
+function isStellarAddress(v: unknown): boolean {
+  return typeof v === "string" && /^G[A-Z2-7]{55}$/.test(v);
 }
 
 /**
@@ -171,7 +203,8 @@ export async function buildRetryHeaders(params: {
     const x402Version = (challenge.raw as any)?.x402Version ?? 1;
     // v2 verifies by strict equality against the requirement the agent
     // accepted, so echo back the exact object from the challenge.
-    const accepted = (challenge.raw as any)?.accepts?.[0];
+    const accepted =
+      challenge.accepted ?? (challenge.raw as any)?.accepts?.[0];
     const payload = wrapX402(
       signed.transactionXdr,
       caip2,
