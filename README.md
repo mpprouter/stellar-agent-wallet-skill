@@ -113,3 +113,7 @@ commit, tag, push.
 ## License
 
 MIT
+
+## Secret scanning
+
+Enable the local gitleaks pre-commit hook once per clone: `brew install gitleaks pre-commit && pre-commit install` (config in `.pre-commit-config.yaml`). CI also runs a report-only scan in `.github/workflows/secret-scan.yml`.
